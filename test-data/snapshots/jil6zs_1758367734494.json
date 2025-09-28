@@ -1,0 +1,28 @@
+{
+  "userId": "test_user",
+  "zodiacSign": "aries",
+  "personalityTraits": {
+    "confidence": 0.8,
+    "creativity": 0.6
+  },
+  "emotionalState": {
+    "mood": 0.7,
+    "energy": 0.8,
+    "confidence": 0.9,
+    "socialAttitude": 0.6
+  },
+  "behaviorPatterns": {
+    "riskTolerance": 0.7,
+    "decisionSpeed": 0.8,
+    "socialInfluence": 0.5,
+    "adaptability": 0.9
+  },
+  "learningHistory": [],
+  "gameMemories": [],
+  "socialRelationships": [],
+  "customizations": [],
+  "timestamp": "2025-09-20T11:28:54.494Z",
+  "version": "1.0.0",
+  "id": "jil6zs_1758367734494",
+  "savedAt": "2025-09-20T11:28:54.494Z"
+}

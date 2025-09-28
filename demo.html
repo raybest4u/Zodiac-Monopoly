@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="十二生肖大富翁 - 基于React + TypeScript的单机版大富翁游戏演示">
+    <meta name="keywords" content="大富翁,十二生肖,React,TypeScript,游戏,演示">
+    <meta name="author" content="十二生肖大富翁开发团队">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="十二生肖大富翁 - 演示版本">
+    <meta property="og:description" content="体验融合中华传统文化的现代化大富翁游戏">
+    <meta property="og:image" content="/assets/og-image.png">
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:title" content="十二生肖大富翁 - 演示版本">
+    <meta property="twitter:description" content="体验融合中华传统文化的现代化大富翁游戏">
+    <meta property="twitter:image" content="/assets/twitter-image.png">
+    
+    <title>十二生肖大富翁 - 演示版本</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/vite.svg">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    
+    <!-- 预加载关键资源 -->
+    <link rel="preload" href="/assets/fonts/main.woff2" as="font" type="font/woff2" crossorigin>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#667eea">
+    
+    <!-- 性能优化 -->
+    <link rel="dns-prefetch" href="//fonts.googleapis.com">
+    <link rel="preconnect" href="//fonts.gstatic.com" crossorigin>
+    
+    <style>
+        /* 加载动画和基础样式 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+                'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+                sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* 加载屏幕 */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 9999;
+            transition: opacity 0.5s ease-out;
+        }
+        
+        .loading-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .loading-logo {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            animation: bounce 2s infinite;
+        }
+        
+        .loading-title {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .loading-subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+        
+        .loading-status {
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% {
+                transform: translateY(0);
+            }
+            40% {
+                transform: translateY(-30px);
+            }
+            60% {
+                transform: translateY(-15px);
+            }
+        }
+        
+        /* 错误屏幕 */
+        .error-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+            padding: 2rem;
+            z-index: 10000;
+        }
+        
+        .error-screen.show {
+            display: flex;
+        }
+        
+        .error-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+        
+        .error-title {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+        
+        .error-message {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            max-width: 600px;
+            line-height: 1.5;
+        }
+        
+        .error-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        
+        .error-button {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 0.75rem 1.5rem;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .error-button:hover {
+            background: rgba(255,255,255,0.3);
+            border-color: rgba(255,255,255,0.5);
+        }
+        
+        /* 主应用容器 */
+        #root {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .loading-logo {
+                font-size: 3rem;
+            }
+            
+            .loading-title {
+                font-size: 1.5rem;
+            }
+            
+            .loading-subtitle {
+                font-size: 1rem;
+            }
+            
+            .error-title {
+                font-size: 1.5rem;
+            }
+            
+            .error-message {
+                font-size: 1rem;
+            }
+        }
+        
+        /* 打印样式 */
+        @media print {
+            .loading-screen,
+            .error-screen {
+                display: none !important;
+            }
+            
+            body {
+                background: white !important;
+                color: black !important;
+            }
+        }
+        
+        /* 高对比度模式 */
+        @media (prefers-contrast: high) {
+            body {
+                background: white;
+                color: black;
+            }
+            
+            .loading-screen {
+                background: black;
+                color: white;
+            }
+        }
+        
+        /* 减少动画模式 */
+        @media (prefers-reduced-motion: reduce) {
+            .loading-logo {
+                animation: none;
+            }
+            
+            .loading-spinner {
+                animation: none;
+                border: 4px solid rgba(255,255,255,0.5);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 无障碍跳转链接 -->
+    <a class="skip-link" href="#main-content">跳转到主要内容</a>
+    
+    <!-- 加载屏幕 -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-logo">🎮</div>
+        <h1 class="loading-title">生肖大富翁</h1>
+        <p class="loading-subtitle">综合演示系统</p>
+        <div class="loading-spinner"></div>
+        <p class="loading-status">正在加载游戏资源...</p>
+    </div>
+    
+    <!-- 错误屏幕 -->
+    <div id="error-screen" class="error-screen">
+        <div class="error-icon">⚠️</div>
+        <h1 class="error-title">加载失败</h1>
+        <p class="error-message">
+            很抱歉，游戏加载过程中出现了问题。这可能是由于网络连接、浏览器兼容性或资源加载问题导致的。
+        </p>
+        <div class="error-actions">
+            <button class="error-button" onclick="location.reload()">🔄 重新加载</button>
+            <button class="error-button" onclick="checkBrowserSupport()">🔍 检查兼容性</button>
+            <button class="error-button" onclick="showErrorDetails()">📋 错误详情</button>
+        </div>
+        <div id="error-details" style="display: none; margin-top: 2rem; max-width: 800px;">
+            <h3>技术信息</h3>
+            <pre id="error-info" style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 5px; text-align: left; font-size: 0.9rem; overflow: auto;"></pre>
+        </div>
+    </div>
+    
+    <!-- 主应用容器 -->
+    <div id="root" role="main" aria-label="十二生肖大富翁游戏">
+        <!-- React 应用将在这里渲染 -->
+    </div>
+    
+    <!-- 浏览器兼容性检查 -->
+    <script>
+        // 全局错误处理
+        window.addEventListener('error', function(e) {
+            console.error('全局错误:', e.error);
+            showError('JavaScript 执行错误: ' + e.message);
+        });
+        
+        window.addEventListener('unhandledrejection', function(e) {
+            console.error('未处理的 Promise 拒绝:', e.reason);
+            showError('异步操作失败: ' + e.reason);
+        });
+        
+        // 显示错误屏幕
+        function showError(message) {
+            const loadingScreen = document.getElementById('loading-screen');
+            const errorScreen = document.getElementById('error-screen');
+            const errorInfo = document.getElementById('error-info');
+            
+            if (loadingScreen) loadingScreen.style.display = 'none';
+            if (errorScreen) errorScreen.classList.add('show');
+            
+            if (errorInfo) {
+                errorInfo.textContent = JSON.stringify({
+                    userAgent: navigator.userAgent,
+                    url: window.location.href,
+                    timestamp: new Date().toISOString(),
+                    error: message,
+                    viewport: window.innerWidth + 'x' + window.innerHeight
+                }, null, 2);
+            }
+        }
+        
+        // 检查浏览器支持
+        function checkBrowserSupport() {
+            const features = {
+                'ES6 Modules': 'noModule' in HTMLScriptElement.prototype,
+                'Fetch API': 'fetch' in window,
+                'Promise': 'Promise' in window,
+                'IndexedDB': 'indexedDB' in window,
+                'Local Storage': 'localStorage' in window,
+                'Web Workers': 'Worker' in window,
+                'CSS Grid': CSS.supports('display', 'grid'),
+                'CSS Flexbox': CSS.supports('display', 'flex')
+            };
+            
+            const unsupported = Object.entries(features)
+                .filter(([name, supported]) => !supported)
+                .map(([name]) => name);
+            
+            if (unsupported.length > 0) {
+                alert('您的浏览器不支持以下功能，可能影响游戏运行:\n\n' + unsupported.join('\n'));
+            } else {
+                alert('您的浏览器支持所有必要功能！');
+            }
+        }
+        
+        // 显示错误详情
+        function showErrorDetails() {
+            const details = document.getElementById('error-details');
+            if (details) {
+                details.style.display = details.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+        
+        // 页面加载完成后隐藏加载屏幕
+        function hideLoadingScreen() {
+            const loadingScreen = document.getElementById('loading-screen');
+            if (loadingScreen) {
+                loadingScreen.classList.add('hidden');
+                setTimeout(() => {
+                    loadingScreen.style.display = 'none';
+                }, 500);
+            }
+        }
+        
+        // 检查必要的 Web API 支持
+        function checkWebAPISupport() {
+            const requiredAPIs = [
+                'fetch',
+                'Promise',
+                'indexedDB',
+                'localStorage',
+                'JSON'
+            ];
+            
+            const missingAPIs = requiredAPIs.filter(api => !(api in window));
+            
+            if (missingAPIs.length > 0) {
+                showError('浏览器不支持必要的 Web API: ' + missingAPIs.join(', '));
+                return false;
+            }
+            
+            return true;
+        }
+        
+        // 初始化应用
+        function initializeApp() {
+            if (!checkWebAPISupport()) {
+                return;
+            }
+            
+            // 更新加载状态
+            const loadingStatus = document.querySelector('.loading-status');
+            if (loadingStatus) {
+                loadingStatus.textContent = '正在启动综合演示系统...';
+            }
+            
+            // 模拟资源加载时间
+            setTimeout(() => {
+                hideLoadingScreen();
+            }, 1000);
+        }
+        
+        // DOM 加载完成后执行
+        document.addEventListener('DOMContentLoaded', initializeApp);
+        
+        // 性能监控
+        if ('performance' in window) {
+            window.addEventListener('load', function() {
+                setTimeout(function() {
+                    const perfData = performance.getEntriesByType('navigation')[0];
+                    console.log('页面加载性能:', {
+                        domContentLoaded: perfData.domContentLoadedEventEnd - perfData.domContentLoadedEventStart,
+                        loadComplete: perfData.loadEventEnd - perfData.loadEventStart,
+                        totalTime: perfData.loadEventEnd - perfData.fetchStart
+                    });
+                }, 0);
+            });
+        }
+    </script>
+    
+    <!-- 主应用脚本 -->
+    <script type="module" src="/src/demo/ComprehensiveGameDemo.tsx"></script>
+    
+    <!-- Service Worker 注册 -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(function(registration) {
+                        console.log('Service Worker 注册成功:', registration);
+                    })
+                    .catch(function(error) {
+                        console.log('Service Worker 注册失败:', error);
+                    });
+            });
+        }
+    </script>
+    
+    <!-- 无障碍样式 -->
+    <style>
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 6px;
+            background: #000;
+            color: #fff;
+            padding: 8px;
+            text-decoration: none;
+            border-radius: 4px;
+            z-index: 100000;
+        }
+        
+        .skip-link:focus {
+            top: 6px;
+        }
+        
+        /* 聚焦指示器 */
+        button:focus,
+        a:focus,
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: 2px solid #4299e1;
+            outline-offset: 2px;
+        }
+        
+        /* 高对比度模式支持 */
+        @media (prefers-contrast: high) {
+            .loading-screen {
+                background: #000000;
+                color: #ffffff;
+            }
+            
+            .error-screen {
+                background: #800000;
+                color: #ffffff;
+            }
+        }
+        
+        /* 减少动画支持 */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</body>
+</html>

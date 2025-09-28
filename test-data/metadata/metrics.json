@@ -1,0 +1,9 @@
+{
+  "totalSnapshots": 2,
+  "totalSizeBytes": 1220,
+  "averageSnapshotSize": 610,
+  "oldestSnapshot": "2025-09-20T11:25:39.686Z",
+  "newestSnapshot": "2025-09-20T11:28:54.496Z",
+  "corruptedFiles": 1,
+  "lastBackup": "2025-09-20T11:28:54.497Z"
+}
