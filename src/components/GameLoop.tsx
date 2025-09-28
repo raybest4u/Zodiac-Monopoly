@@ -75,7 +75,11 @@ export const GameLoop: React.FC<GameLoopProps> = ({
     selectedPlayerId: null as string | null,
     showGameMenu: false,
     showSettings: false,
-    notifications: [] as Array<{ id: string; message: string; type: string }>
+    notifications: [] as Array<{ id: string; message: string; type: string }>,
+    showNegotiateModal: false,
+    negotiateTarget: null as any,
+    negotiateProperty: null as any,
+    aiProcessing: false // 防止AI重复处理
   });
 
   // 视觉效果状态
@@ -110,7 +114,9 @@ export const GameLoop: React.FC<GameLoopProps> = ({
       setGameState(prev => ({ ...prev, isLoading: true, error: null }));
 
       // 创建游戏引擎
+      console.log('🏗️ 创建新的 GameEngine 实例');
       const gameEngine = new GameEngine();
+      console.log('🏗️ 设置 gameEngineRef.current');
       gameEngineRef.current = gameEngine;
 
       // 设置事件监听器 - 内联定义避免依赖问题
@@ -300,6 +306,26 @@ export const GameLoop: React.FC<GameLoopProps> = ({
       }
     });
 
+    // 双数事件处理
+    gameEngine.on('dice:double', (data) => {
+      const { player, diceResult } = data;
+      console.log(`🎲 双数事件: ${player.name} 掷出 ${diceResult.dice1}+${diceResult.dice2}=${diceResult.total}`);
+      
+      // 同步游戏状态
+      const updatedGameState = gameEngine.getGameState();
+      if (updatedGameState) {
+        setGameState(prev => ({
+          ...prev,
+          currentPlayer: updatedGameState.players[updatedGameState.currentPlayerIndex] || null,
+          gamePhase: updatedGameState.phase,
+          round: updatedGameState.round,
+          players: updatedGameState.players
+        }));
+      }
+      
+      addNotification(`${player.name} 掷出双数，可以再次掷骰子！`, 'success');
+    });
+
     // 属性购买
     gameEngine.on('propertyPurchased', (data) => {
       const { player, property } = data;
@@ -478,10 +504,62 @@ export const GameLoop: React.FC<GameLoopProps> = ({
     console.log('处理玩家操作:', action, '当前游戏状态:', gameState);
 
     try {
+      // 如果没有指定playerId，自动设置为当前玩家ID（用于人类玩家操作）
+      if (!action.playerId && gameState.currentPlayer) {
+        if (gameState.currentPlayer.isHuman) {
+          action = { ...action, playerId: gameState.currentPlayer.id };
+        } else {
+          // AI玩家回合时，人类玩家不应该能执行动作
+          console.warn('⚠️ 人类玩家试图在AI回合时执行动作:', action.type);
+          addNotification('当前是AI玩家回合，请等待...', 'warning');
+          return;
+        }
+      }
+      
       // 提供反馈
       // feedbackSystemRef.current?.provideGameFeedback('action_start', action);
       
-      // 执行操作
+      // 执行操作前的状态检查
+      console.log('🔍 准备执行操作，GameEngine 检查:');
+      console.log('🔍 gameEngineRef.current 存在:', !!gameEngineRef.current);
+      console.log('🔍 gameEngineRef.current.gameState 存在:', !!gameEngineRef.current?.gameState);
+      console.log('🔍 gameEngineRef.current.gameState 详情:', gameEngineRef.current?.gameState ? '已初始化' : '未初始化');
+      
+      // 如果GameEngine存在但gameState未初始化，尝试重新初始化
+      if (gameEngineRef.current && !gameEngineRef.current.gameState) {
+        console.log('⚠️ 检测到GameEngine未初始化，尝试重新初始化');
+        addNotification('检测到游戏状态异常，正在重新初始化...', 'warning');
+        
+        try {
+          await gameEngineRef.current.initialize({
+            playerName: gameState.currentPlayer?.name || '玩家',
+            playerZodiac: gameState.currentPlayer?.zodiac || 'rat',
+            aiOpponents: gameState.players?.filter(p => !p.isHuman).map(p => ({
+              name: p.name,
+              difficulty: 'hard',
+              personality: 'balanced'
+            })) || [
+              { name: '千里神驹', difficulty: 'hard', personality: 'aggressive' },
+              { name: '不死凤凰', difficulty: 'medium', personality: 'balanced' },
+              { name: '毒蛇商贾', difficulty: 'easy', personality: 'conservative' }
+            ],
+            gameSettings: {
+              startingMoney: 15000,
+              maxRounds: 100,
+              winCondition: 'last_standing',
+              enableSpecialEvents: true,
+              enableSkills: true
+            }
+          });
+          console.log('✅ 重新初始化成功');
+          addNotification('游戏状态已恢复', 'success');
+        } catch (error) {
+          console.error('❌ 重新初始化失败:', error);
+          addNotification('重新初始化失败，请刷新页面', 'error');
+          return;
+        }
+      }
+      
       const result = await gameEngineRef.current.processPlayerAction(action);
       console.log('操作结果:', result);
       
@@ -521,7 +599,11 @@ export const GameLoop: React.FC<GameLoopProps> = ({
           ...prev,
           diceRoll: {
             isRolling: true,
-            result: diceResult,
+            result: {
+              value1: diceResult[0],
+              value2: diceResult[1], 
+              sum: totalMoves
+            },
             showResult: false
           }
         }));
@@ -602,6 +684,17 @@ export const GameLoop: React.FC<GameLoopProps> = ({
           }
         }));
         addNotification('技能使用成功！', 'success');
+      } else if (['buy_property', 'skip_purchase', 'pay_rent', 'upgrade_property', 'skip_upgrade'].includes(action.type)) {
+        // AI完成地产相关操作后，检查是否需要继续处理
+        if (action.playerId && updatedGameState) {
+          const currentPlayerInUpdatedState = updatedGameState.players[updatedGameState.currentPlayerIndex];
+          if (!currentPlayerInUpdatedState.isHuman && currentPlayerInUpdatedState.id === action.playerId) {
+            console.log(`AI操作 ${action.type} 完成，当前阶段: ${updatedGameState.phase}，准备继续处理...`);
+            setTimeout(() => {
+              handleAITurnContinue(action.playerId);
+            }, 1000);
+          }
+        }
       }
       
       // 操作成功反馈
@@ -609,8 +702,99 @@ export const GameLoop: React.FC<GameLoopProps> = ({
       
     } catch (error) {
       console.error('Player action failed:', error);
+      console.log('完整错误对象:', error);
+      console.log('错误对象类型:', typeof error);
+      console.log('错误对象的所有属性:', Object.keys(error as any));
+      console.log('Error object details:', {
+        canNegotiate: (error as any).canNegotiate,
+        owner: (error as any).owner,
+        businessValidation: (error as any).businessValidation,
+        message: (error as any).message
+      });
+      
+      // 检查是否是可以协商购买的错误
+      const canNegotiate = (error as any).canNegotiate || (error as any).businessValidation?.canNegotiate;
+      let owner = (error as any).owner || (error as any).businessValidation?.owner;
+      
+      console.log('提取的协商信息:', { canNegotiate, owner });
+      
+      // 如果没有找到拥有者，但是错误提到了拥有者名称，尝试手动查找
+      if (canNegotiate && !owner) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const ownerNameMatch = errorMessage.match(/Property owned by (.+)/);
+        if (ownerNameMatch && ownerNameMatch[1]) {
+          const ownerName = ownerNameMatch[1];
+          owner = gameState.players.find(p => p.name === ownerName);
+          console.log(`手动查找拥有者: ${ownerName}`, owner);
+        }
+      }
+      
+      if (canNegotiate && owner) {
+        console.log('协商条件满足，开始处理协商逻辑');
+        const currentPlayer = gameState.currentPlayer;
+        console.log('当前玩家:', currentPlayer);
+        
+        if (currentPlayer?.isHuman) {
+          console.log('人类玩家协商购买逻辑被触发！');
+          // 人类玩家：显示协商购买界面
+          addNotification(`该地产属于 ${owner.name}！`, 'info');
+          addNotification(`💼 提示：你可以尝试与 ${owner.name} 协商购买`, 'info');
+          
+          // 显示协商购买选项
+          console.log('设置协商模态框状态...');
+          console.log('当前owner对象:', owner);
+          console.log('当前player位置:', currentPlayer.position);
+          
+          setUiState(prev => {
+            console.log('之前的UI状态:', prev);
+            const newState = {
+              ...prev,
+              showNegotiateModal: true,
+              negotiateTarget: owner,
+              negotiateProperty: {
+                position: currentPlayer.position || 0,
+                owner: owner
+              }
+            };
+            console.log('新的UI状态:', newState);
+            console.log('模态框应该显示:', newState.showNegotiateModal);
+            return newState;
+          });
+          
+          // 延迟检查UI状态
+          setTimeout(() => {
+            console.log('延迟检查 - 当前UI状态:', uiState);
+          }, 100);
+        } else {
+          // AI玩家：自动决策是否协商购买
+          await handleAINegotiate(currentPlayer, owner, currentPlayer?.position || 0);
+        }
+      } else {
+        // 普通错误处理
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const cleanMessage = errorMessage.replace('Invalid action: ', '');
+        
+        if (cleanMessage.includes('Insufficient funds')) {
+          addNotification('💰 资金不足，无法购买该地产', 'error');
+        } else if (cleanMessage.includes('already own')) {
+          const currentPlayer = gameState.currentPlayer;
+          if (currentPlayer?.isHuman) {
+            addNotification('🏠 你已经拥有该地产了', 'info');
+          } else {
+            addNotification(`${currentPlayer?.name} 已经拥有该地产，跳过操作`, 'info');
+            // AI意外尝试购买自己地产时，自动继续流程
+            setTimeout(() => {
+              handleAITurnContinue(currentPlayer.id);
+            }, 1000);
+          }
+        } else if (cleanMessage.includes('not a property')) {
+          addNotification('❌ 该位置不是可购买的地产', 'error');
+        } else {
+          addNotification(`操作失败: ${cleanMessage}`, 'error');
+        }
+      }
+      
       // feedbackSystemRef.current?.provideGameFeedback('action_failed', { action, error });
-      addNotification(`操作失败: ${error}`, 'error');
     }
   }, [onPlayerAction, addNotification, gameState]);
 
@@ -660,11 +844,20 @@ export const GameLoop: React.FC<GameLoopProps> = ({
   const handleAITurnContinue = useCallback(async (playerId: string) => {
     if (!gameEngineRef.current) return;
     
+    // 防止重复处理
+    if (uiState.aiProcessing) {
+      console.log(`AI正在处理中，跳过重复调用 ${playerId}`);
+      return;
+    }
+    
     const currentGameState = gameEngineRef.current.getGameState();
     if (!currentGameState) return;
     
     const currentPlayer = currentGameState.players[currentGameState.currentPlayerIndex];
     if (!currentPlayer || currentPlayer.isHuman || currentPlayer.id !== playerId) return;
+    
+    // 设置AI处理标志
+    setUiState(prev => ({ ...prev, aiProcessing: true }));
     
     try {
       // AI根据格子类型做决策
@@ -678,30 +871,299 @@ export const GameLoop: React.FC<GameLoopProps> = ({
       
       const currentCell = boardCells.find(cell => cell.id === currentPlayer.position);
       
-      if (currentCell?.type === 'property') {
+      // 检查当前游戏阶段，AI根据阶段做出相应决策
+      const currentGameState2 = gameEngineRef.current.getGameState();
+      if (!currentGameState2) return;
+      
+      console.log(`🤖 AI玩家 ${currentPlayer.name} 在阶段 ${currentGameState2.phase} 做决策`);
+      console.log(`🤖 AI玩家位置: ${currentPlayer.position}`);
+      console.log(`🤖 调试信息 - 阶段对比:`, {
+        enginePhase: currentGameState2.phase,
+        uiPhase: gameState.gamePhase,
+        engineCurrentPlayer: currentGameState2.players[currentGameState2.currentPlayerIndex]?.name,
+        uiCurrentPlayer: gameState.currentPlayer?.name
+      });
+      
+      if (currentGameState2.phase === 'roll_dice') {
+        // 检查是否是双数导致的再次掷骰子机会
+        const lastDiceResult = currentGameState2.lastDiceResult;
+        if (lastDiceResult && lastDiceResult.isDouble) {
+          console.log('🤖 AI掷出双数，获得再次掷骰子机会!');
+          addNotification(`${currentPlayer.name} 掷出双数，再来一次！`, 'success');
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 思考时间
+          await handlePlayerAction({ type: 'roll_dice', playerId: currentPlayer.id });
+          
+          // 等待新的掷骰子结果处理
+          setTimeout(() => {
+            handleAITurnContinue(currentPlayer.id);
+          }, 4000);
+          return;
+        } else {
+          // 非双数情况，应该已经处理完毕，等待阶段转换
+          console.log('🤖 AI检测到roll_dice阶段，但非双数情况，等待阶段转换');
+          console.log('🤖 调试信息:', {
+            lastDiceResult,
+            isDouble: lastDiceResult?.isDouble,
+            gamePhase: currentGameState2.phase,
+            playerPosition: currentPlayer.position
+          });
+          return;
+        }
+      } else if (currentGameState2.phase === 'property_action') {
+        console.log('🤖 AI进入property_action阶段');
         // AI考虑是否购买地产
-        addNotification(`${currentPlayer.name} 考虑购买 ${currentCell.name}...`, 'info');
+        const position = currentPlayer.position;
+        const price = gameEngineRef.current.getPropertyPrice(position);
+        
+        console.log(`🤖 AI玩家 ${currentPlayer.name} 在位置 ${position}，价格: ${price}`);
+        
+        // 检查地产拥有状态
+        const cell = currentGameState2.board[position];
+        console.log(`🤖 当前位置的格子信息:`, cell);
+        const isOwnedBySelf = cell?.ownerId === currentPlayer.id;
+        const isOwnedByOther = cell?.ownerId && cell.ownerId !== currentPlayer.id;
+        
+        console.log(`格子信息:`, { cell, isOwnedBySelf, isOwnedByOther });
+        
+        if (isOwnedBySelf) {
+          console.log('进入自己拥有的地产逻辑');
+          // 地产被自己拥有，考虑升级或直接跳过
+          addNotification(`${currentPlayer.name} 回到了自己的地产`, 'info');
+          
+          // 检查是否可以升级
+          const property = currentPlayer.properties?.find(p => p.position === position);
+          if (property && property.level < 5 && currentPlayer.money > price) {
+            addNotification(`${currentPlayer.name} 考虑升级自己的地产...`, 'info');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // AI升级决策：如果资金充足就升级
+            if (currentPlayer.money > price * 4) { // 保留足够资金
+              addNotification(`${currentPlayer.name} 决定升级地产！`, 'success');
+              await handlePlayerAction({ type: 'upgrade_property', playerId: currentPlayer.id });
+            } else {
+              addNotification(`${currentPlayer.name} 暂时不升级`, 'info');
+              await handlePlayerAction({ type: 'skip_upgrade', playerId: currentPlayer.id });
+            }
+          } else {
+            addNotification(`${currentPlayer.name} 跳过自己的地产`, 'info');
+            await handlePlayerAction({ type: 'end_turn', playerId: currentPlayer.id });
+          }
+        } else if (isOwnedByOther) {
+          console.log('进入其他玩家拥有的地产逻辑');
+          // 地产被其他玩家拥有，考虑协商购买
+          const owner = currentGameState2.players.find(p => p.id === cell.ownerId);
+          if (owner) {
+            addNotification(`${currentPlayer.name} 发现地产被 ${owner.name} 拥有`, 'info');
+            await handleAINegotiate(currentPlayer, owner, position);
+          } else {
+            // 找不到拥有者，跳过
+            addNotification(`${currentPlayer.name} 无法确定地产拥有者，跳过`, 'info');
+            await handlePlayerAction({ type: 'skip_purchase', playerId: currentPlayer.id });
+          }
+        } else {
+          console.log('进入无主地产逻辑，价格检查:', price);
+          console.log('格子类型检查:', cell?.type);
+          // 检查是否是可购买的地产 - 使用和UI相同的验证逻辑
+          const isPurchasableType = cell && ['property', 'station', 'utility', 'zodiac_temple'].includes(cell.type);
+          if (!isPurchasableType) {
+            console.log('检测到非可购买格子，跳过购买。格子类型:', cell?.type);
+            // 特殊位置（起点、监狱、机会等），不能购买
+            addNotification(`${currentPlayer.name} 到达特殊位置，无需购买`, 'info');
+            await handlePlayerAction({ type: 'end_turn', playerId: currentPlayer.id });
+          } else {
+            console.log('正常地产，尝试购买决策');
+            // 地产无主，正常购买逻辑
+            addNotification(`${currentPlayer.name} 考虑购买地产...`, 'info');
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            
+            const shouldBuy = currentPlayer.money > price * 3; // 保留至少3倍地产价格的资金
+            
+            if (shouldBuy) {
+              addNotification(`${currentPlayer.name} 决定购买！`, 'success');
+              await handlePlayerAction({ type: 'buy_property', playerId: currentPlayer.id });
+            } else {
+              addNotification(`${currentPlayer.name} 觉得太贵了，放弃购买`, 'info');
+              await handlePlayerAction({ type: 'skip_purchase', playerId: currentPlayer.id });
+            }
+          }
+        }
+        return; // 操作完成，直接返回
+      } else if (currentGameState2.phase === 'pay_rent') {
+        // AI支付租金
+        addNotification(`${currentPlayer.name} 需要支付租金`, 'info');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await handlePlayerAction({ type: 'pay_rent', playerId: currentPlayer.id });
+        return;
+      } else if (currentGameState2.phase === 'upgrade_property') {
+        // AI考虑是否升级地产
+        addNotification(`${currentPlayer.name} 考虑升级地产...`, 'info');
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // 简单AI逻辑：如果有足够资金就购买
-        if (currentPlayer.money > 1000) {
-          addNotification(`${currentPlayer.name} 决定购买 ${currentCell.name}！`, 'success');
+        // 简单升级逻辑：如果资金充足就升级
+        if (currentPlayer.money > 5000) {
+          addNotification(`${currentPlayer.name} 决定升级地产！`, 'success');
+          await handlePlayerAction({ type: 'upgrade_property', playerId: currentPlayer.id });
         } else {
-          addNotification(`${currentPlayer.name} 资金不足，放弃购买`, 'info');
+          addNotification(`${currentPlayer.name} 暂时不升级`, 'info');
+          await handlePlayerAction({ type: 'skip_upgrade', playerId: currentPlayer.id });
         }
-      } else if (currentCell?.type === 'chance') {
-        addNotification(`${currentPlayer.name} 触发机会事件！`, 'info');
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        return;
+      } else if (currentGameState2.phase === 'end_turn') {
+        // AI已完成所有操作，直接结束回合
+        console.log(`AI玩家 ${currentPlayer.name} 准备结束回合`);
+        addNotification(`${currentPlayer.name} 结束回合`, 'info');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await handlePlayerAction({ type: 'end_turn', playerId: currentPlayer.id });
+        return;
+      } else if (currentGameState2.phase === 'handle_event') {
+        // AI处理事件（机会牌、命运牌等）
+        console.log(`🤖 AI处理事件阶段`);
+        addNotification(`${currentPlayer.name} 处理事件...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        // 事件通常会自动处理，AI无需特殊操作
+        return;
+      } else if (currentGameState2.phase === 'check_win') {
+        // 检查胜利条件阶段，无需AI操作
+        console.log(`🤖 AI在胜利检查阶段`);
+        return;
       }
       
-      // AI结束回合
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      await handlePlayerAction({ type: 'end_turn', playerId: currentPlayer.id });
+      // 默认情况：未知阶段，不执行操作
+      console.log(`🤖 AI玩家 ${currentPlayer.name} 在未知阶段 ${currentGameState2.phase}，等待阶段转换`);
+      console.warn(`⚠️ AI未处理的阶段: ${currentGameState2.phase}，可能需要添加处理逻辑`);
+      // 不自动执行 end_turn，让系统自然处理阶段转换
       
     } catch (error) {
       console.error('AI回合后续处理失败:', error);
+    } finally {
+      // 清除AI处理标志
+      setUiState(prev => ({ ...prev, aiProcessing: false }));
     }
-  }, [handlePlayerAction, addNotification]);
+  }, [handlePlayerAction, addNotification, uiState.aiProcessing]);
+
+  /**
+   * 处理协商购买
+   */
+  const handleNegotiatePurchase = useCallback(async (offerPrice: number) => {
+    if (!uiState.negotiateTarget || !uiState.negotiateProperty || !gameEngineRef.current) return;
+    
+    const owner = uiState.negotiateTarget;
+    const property = uiState.negotiateProperty;
+    const currentPlayer = gameState.currentPlayer;
+    
+    if (!currentPlayer) return;
+    
+    try {
+      // 调用游戏引擎的协商购买功能
+      const result = await gameEngineRef.current.negotiatePropertyPurchase(
+        currentPlayer.id,
+        owner.id,
+        property.position,
+        offerPrice
+      );
+      
+      if (result.success) {
+        addNotification(result.message, 'success');
+        addNotification(`🎉 你成功购买了位置 ${property.position} 的地产！`, 'success');
+        
+        // 更新UI游戏状态
+        const updatedGameState = gameEngineRef.current.getGameState();
+        if (updatedGameState) {
+          setGameState(prev => ({
+            ...prev,
+            currentPlayer: updatedGameState.players[updatedGameState.currentPlayerIndex] || null,
+            players: updatedGameState.players
+          }));
+        }
+      } else {
+        addNotification(result.message, 'error');
+      }
+    } catch (error) {
+      console.error('协商购买失败:', error);
+      addNotification('协商购买过程出现错误', 'error');
+    }
+    
+    // 关闭协商模态框
+    setUiState(prev => ({
+      ...prev,
+      showNegotiateModal: false,
+      negotiateTarget: null,
+      negotiateProperty: null
+    }));
+  }, [uiState.negotiateTarget, uiState.negotiateProperty, gameState.currentPlayer, addNotification]);
+
+  /**
+   * 处理AI协商购买
+   */
+  const handleAINegotiate = useCallback(async (aiPlayer: any, owner: any, position: number) => {
+    if (!gameEngineRef.current) return;
+    
+    try {
+      addNotification(`${aiPlayer.name} 考虑协商购买 ${owner.name} 的地产...`, 'info');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const basePrice = gameEngineRef.current.getPropertyPrice(position);
+      const aiOfferPrice = Math.floor(basePrice * 1.6); // AI出价1.6倍
+      
+      // AI决策：如果有足够资金且性价比合理则协商购买
+      if (aiPlayer.money >= aiOfferPrice && aiPlayer.money > aiOfferPrice * 2) {
+        addNotification(`${aiPlayer.name} 决定出价 $${aiOfferPrice.toLocaleString()} 协商购买！`, 'info');
+        
+        const result = await gameEngineRef.current.negotiatePropertyPurchase(
+          aiPlayer.id,
+          owner.id,
+          position,
+          aiOfferPrice
+        );
+        
+        if (result.success) {
+          addNotification(`🤝 ${result.message}`, 'success');
+          addNotification(`${aiPlayer.name} 成功协商购买了地产！`, 'success');
+          
+          // 更新游戏状态
+          const updatedGameState = gameEngineRef.current.getGameState();
+          if (updatedGameState) {
+            setGameState(prev => ({
+              ...prev,
+              currentPlayer: updatedGameState.players[updatedGameState.currentPlayerIndex] || null,
+              players: updatedGameState.players
+            }));
+          }
+        } else {
+          addNotification(`${aiPlayer.name}: ${result.message}`, 'info');
+          addNotification(`${aiPlayer.name} 协商失败，跳过购买`, 'info');
+        }
+      } else {
+        addNotification(`${aiPlayer.name} 认为协商成本太高，放弃购买`, 'info');
+      }
+      
+      // AI完成协商后继续游戏流程
+      setTimeout(() => {
+        handleAITurnContinue(aiPlayer.id);
+      }, 1000);
+      
+    } catch (error) {
+      console.error('AI协商购买失败:', error);
+      addNotification(`${aiPlayer.name} 协商过程出现错误`, 'error');
+      
+      // 出错时也要继续游戏流程
+      setTimeout(() => {
+        handleAITurnContinue(aiPlayer.id);
+      }, 1000);
+    }
+  }, [addNotification, handleAITurnContinue]);
+
+  /**
+   * 关闭协商模态框
+   */
+  const closeNegotiateModal = useCallback(() => {
+    setUiState(prev => ({
+      ...prev,
+      showNegotiateModal: false,
+      negotiateTarget: null,
+      negotiateProperty: null
+    }));
+  }, []);
 
   /**
    * 处理UI交互
@@ -1270,9 +1732,37 @@ export const GameLoop: React.FC<GameLoopProps> = ({
             textAlign: 'center',
             marginBottom: '20px'
           }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#2d3748' }}>你的回合</h3>
+            <h3 style={{ margin: '0 0 10px 0', color: '#2d3748' }}>你的回合</h3>
+            
+            {/* 当前阶段状态指示器 */}
+            <div style={{
+              background: '#f7fafc',
+              border: '1px solid #e2e8f0',
+              padding: '10px',
+              borderRadius: '6px',
+              marginBottom: '15px',
+              textAlign: 'center'
+            }}>
+              <span style={{ 
+                color: gameState.gamePhase === 'roll_dice' ? '#48bb78' : 
+                      gameState.gamePhase === 'property_action' ? '#ed8936' : 
+                      gameState.gamePhase === 'pay_rent' ? '#e53e3e' : '#4299e1',
+                fontWeight: 'bold',
+                fontSize: '1.1rem'
+              }}>
+                {
+                  gameState.gamePhase === 'roll_dice' ? '🎲 请掷骰子' :
+                  gameState.gamePhase === 'property_action' ? '🏠 地产操作' :
+                  gameState.gamePhase === 'pay_rent' ? '💰 支付租金' :
+                  gameState.gamePhase === 'upgrade_property' ? '🏗️ 升级地产' :
+                  gameState.gamePhase === 'end_turn' ? '✅ 结束回合' :
+                  gameState.gamePhase
+                }
+              </span>
+            </div>
+            
             <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              {gameState.gamePhase === 'roll_dice' && (
+              {gameState.gamePhase === 'roll_dice' && gameState.currentPlayer?.isHuman && (
                 <button
                   onClick={() => handlePlayerAction({ type: 'roll_dice' })}
                   style={{
@@ -1290,7 +1780,28 @@ export const GameLoop: React.FC<GameLoopProps> = ({
                 </button>
               )}
               
-              {gameState.gamePhase === 'property_action' && (
+              {gameState.gamePhase === 'property_action' && (() => {
+                const currentPlayer = gameState.currentPlayer;
+                const position = currentPlayer?.position;
+                const cell = position !== undefined ? gameState.board?.[position] : null;
+                const isPurchasableCell = cell && ['property', 'station', 'utility', 'zodiac_temple'].includes(cell.type);
+                const isHumanPlayerTurn = currentPlayer?.isHuman === true;
+                
+                console.log('UI购买按钮检查:', { 
+                  position, 
+                  cellType: cell?.type, 
+                  isPurchasableCell, 
+                  isHumanPlayerTurn,
+                  currentPlayerName: currentPlayer?.name 
+                });
+                console.log('当前棋盘状态:', { 
+                  boardLength: gameState.board?.length, 
+                  hasBoard: !!gameState.board,
+                  cellAtPosition: gameState.board?.[position]
+                });
+                
+                return isPurchasableCell && isHumanPlayerTurn;
+              })() && (
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                   <button
                     onClick={() => handlePlayerAction({ type: 'buy_property' })}
@@ -1325,7 +1836,53 @@ export const GameLoop: React.FC<GameLoopProps> = ({
                 </div>
               )}
               
-              {gameState.gamePhase === 'pay_rent' && (
+              {gameState.gamePhase === 'property_action' && (() => {
+                const currentPlayer = gameState.currentPlayer;
+                const position = currentPlayer?.position;
+                const cell = position !== undefined ? gameState.board?.[position] : null;
+                const isPurchasableCell = cell && ['property', 'station', 'utility', 'zodiac_temple'].includes(cell.type);
+                const isNotPurchasableCell = !isPurchasableCell;
+                const isHumanPlayerTurn = currentPlayer?.isHuman === true;
+                
+                console.log('特殊位置按钮检查:', { 
+                  gamePhase: gameState.gamePhase, 
+                  isNotPurchasableCell, 
+                  isHumanPlayerTurn,
+                  currentPlayerName: currentPlayer?.name,
+                  cellType: cell?.type
+                });
+                
+                return isNotPurchasableCell && isHumanPlayerTurn;
+              })() && (
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '10px' }}>
+                  <div style={{ 
+                    padding: '12px 24px', 
+                    background: '#f7fafc', 
+                    border: '2px solid #e2e8f0',
+                    borderRadius: '8px',
+                    fontSize: '1.1rem'
+                  }}>
+                    🏛️ 特殊位置，无需购买
+                  </div>
+                  <button
+                    onClick={() => handlePlayerAction({ type: 'end_turn' })}
+                    style={{
+                      padding: '12px 24px',
+                      fontSize: '1.1rem',
+                      background: '#4299e1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }}
+                  >
+                    ✅ 结束回合
+                  </button>
+                </div>
+              )}
+              
+              {gameState.gamePhase === 'pay_rent' && gameState.currentPlayer?.isHuman && (
                 <button
                   onClick={() => handlePlayerAction({ type: 'pay_rent' })}
                   style={{
@@ -1343,7 +1900,7 @@ export const GameLoop: React.FC<GameLoopProps> = ({
                 </button>
               )}
               
-              {gameState.gamePhase === 'upgrade_property' && (
+              {gameState.gamePhase === 'upgrade_property' && gameState.currentPlayer?.isHuman && (
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                   <button
                     onClick={() => handlePlayerAction({ type: 'upgrade_property' })}
@@ -1723,6 +2280,110 @@ export const GameLoop: React.FC<GameLoopProps> = ({
           }));
         }}
       />
+
+      {/* 协商购买模态框 */}
+      {(() => {
+        console.log('模态框渲染检查:', {
+          showNegotiateModal: uiState.showNegotiateModal,
+          negotiateTarget: uiState.negotiateTarget,
+          shouldShow: uiState.showNegotiateModal && uiState.negotiateTarget
+        });
+        return null;
+      })()}
+      {uiState.showNegotiateModal && uiState.negotiateTarget && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '12px',
+            padding: '30px',
+            maxWidth: '500px',
+            width: '90%',
+            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)'
+          }}>
+            <h2 style={{ margin: '0 0 20px 0', color: '#2d3748', textAlign: 'center' }}>
+              💼 协商购买地产
+            </h2>
+            
+            <div style={{ marginBottom: '20px', padding: '15px', background: '#f7fafc', borderRadius: '8px' }}>
+              <p><strong>地产位置:</strong> {uiState.negotiateProperty?.position}</p>
+              <p><strong>当前拥有者:</strong> {uiState.negotiateTarget.name}</p>
+              <p><strong>原价:</strong> ${gameEngineRef.current?.getPropertyPrice(uiState.negotiateProperty?.position || 0).toLocaleString()}</p>
+              <p style={{ color: '#e53e3e', fontWeight: 'bold' }}>
+                💡 建议出价: ${Math.floor((gameEngineRef.current?.getPropertyPrice(uiState.negotiateProperty?.position || 0) || 0) * 1.5).toLocaleString()} 或更高
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                你的出价:
+              </label>
+              <input
+                type="number"
+                id="negotiatePrice"
+                placeholder="输入出价金额"
+                min="0"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '2px solid #e2e8f0',
+                  borderRadius: '6px',
+                  fontSize: '16px'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button
+                onClick={() => {
+                  const input = document.getElementById('negotiatePrice') as HTMLInputElement;
+                  const offerPrice = parseInt(input.value);
+                  if (offerPrice > 0) {
+                    handleNegotiatePurchase(offerPrice);
+                  } else {
+                    addNotification('请输入有效的出价金额', 'error');
+                  }
+                }}
+                style={{
+                  padding: '12px 24px',
+                  background: '#48bb78',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                🤝 提交报价
+              </button>
+              <button
+                onClick={closeNegotiateModal}
+                style={{
+                  padding: '12px 24px',
+                  background: '#e53e3e',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+              >
+                ❌ 取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

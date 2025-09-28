@@ -13,10 +13,21 @@ export type GamePhase =
   | 'roll_dice' | 'move_player' | 'process_cell'
   | 'handle_event' | 'end_turn' | 'check_win';
 
-// 格子类型
+// 格子类型 - 使用统一定义
 export type CellType = 
-  | 'start' | 'property' | 'chance' | 'community'
-  | 'tax' | 'jail' | 'parking' | 'special';
+  | 'start'           // 起点
+  | 'property'        // 地产
+  | 'chance'          // 机会
+  | 'community'       // 公共资金
+  | 'tax'             // 税收
+  | 'jail'            // 监狱
+  | 'parking'         // 免费停车
+  | 'go_to_jail'      // 进监狱
+  | 'utility'         // 公用事业
+  | 'railroad'        // 铁路/车站
+  | 'special'         // 其他特殊格子
+  | 'portal'          // 传送门
+  | 'zodiac_temple';  // 生肖殿
 
 // 动作类型
 export type ActionType = 

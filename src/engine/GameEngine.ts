@@ -63,8 +63,15 @@ export class GameEngine {
         };
       }
       
+      // 确保起始资金足够
+      if (config.gameSettings.startingMoney < 5000) {
+        config.gameSettings.startingMoney = 15000;
+      }
+      
       // 创建新的游戏状态
+      console.log('✅ 创建新的游戏状态');
       this.gameState = this.createInitialGameState(config);
+      console.log('✅ gameState 已初始化:', this.gameState ? '成功' : '失败');
       
       // 创建玩家
       const humanPlayer = this.createHumanPlayer(config);
@@ -75,7 +82,10 @@ export class GameEngine {
       this.gameState.currentPlayerIndex = 0;
       
       // 生成棋盘
+      console.log('🏗️ 开始生成棋盘...');
       this.gameState.board = this.generateBoard();
+      console.log('🏗️ 棋盘生成完成，格子数量:', this.gameState.board.length);
+      console.log('🏗️ 位置3的格子信息:', this.gameState.board[3]);
       
       // 设置初始状态
       this.gameState.status = 'waiting';
@@ -83,17 +93,83 @@ export class GameEngine {
       this.gameState.startTime = Date.now();
       this.gameState.lastUpdateTime = Date.now();
       
+      // 验证状态完整性
+      if (!this.validateGameStateIntegrity()) {
+        throw new Error('Game state integrity validation failed');
+      }
+      
       // 保存初始状态
       this.saveGameState();
       
       // 发布初始化完成事件
       this.eventEmitter.emit('game:initialized', this.gameState);
       
-      console.log('Game engine initialized successfully');
+      console.log('=== GameEngine 初始化完成 ===');
     } catch (error) {
-      console.error('Failed to initialize game engine:', error);
+      console.error('❌ GameEngine 初始化失败:', error);
+      this.gameState = null;
       throw error;
     }
+  }
+  
+  /**
+   * 检查是否为可购买类型
+   */
+  private isPurchasableType(cellType: string): boolean {
+    const purchasableTypes = ['property', 'station', 'utility', 'zodiac_temple'];
+    return purchasableTypes.includes(cellType);
+  }
+
+  /**
+   * 验证游戏状态完整性
+   */
+  private validateGameStateIntegrity(): boolean {
+    if (!this.gameState) {
+      console.error('❌ 状态验证失败: gameState 为空');
+      return false;
+    }
+    
+    if (!this.gameState.players || this.gameState.players.length === 0) {
+      console.error('❌ 状态验证失败: 无玩家');
+      return false;
+    }
+    
+    if (!this.gameState.board || this.gameState.board.length !== 40) {
+      console.error('❌ 状态验证失败: 棋盘格子数量不正确，当前:', this.gameState.board?.length);
+      return false;
+    }
+    
+    if (this.gameState.currentPlayerIndex < 0 || this.gameState.currentPlayerIndex >= this.gameState.players.length) {
+      console.error('❌ 状态验证失败: 当前玩家索引无效');
+      return false;
+    }
+    
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+    if (!currentPlayer || currentPlayer.money < 0) {
+      console.error('❌ 状态验证失败: 当前玩家无效');
+      return false;
+    }
+    
+    // 验证棋盘格子类型
+    const invalidCells = this.gameState.board.filter(cell => !cell.type);
+    if (invalidCells.length > 0) {
+      console.error('❌ 状态验证失败: 发现无类型格子:', invalidCells.length);
+      return false;
+    }
+    
+    // 验证地产格子
+    const propertyCells = this.gameState.board.filter(cell => cell.type === 'property');
+    if (propertyCells.length === 0) {
+      console.error('❌ 状态验证失败: 没有地产格子');
+      return false;
+    }
+    
+    console.log('✅ 游戏状态验证通过');
+    console.log(`✅ 玩家数量: ${this.gameState.players.length}`);
+    console.log(`✅ 棋盘格子: ${this.gameState.board.length}`);
+    console.log(`✅ 地产格子: ${propertyCells.length}`);
+    console.log(`✅ 当前玩家: ${currentPlayer.name} ($${currentPlayer.money})`);
+    return true;
   }
 
   /**
@@ -164,6 +240,8 @@ export class GameEngine {
     const total = dice1 + dice2;
     const isDouble = dice1 === dice2;
     
+    console.log('🎲 掷骰子结果:', { dice1, dice2, total, isDouble });
+    
     const result: DiceResult = {
       dice1,
       dice2,
@@ -174,6 +252,9 @@ export class GameEngine {
     
     if (this.gameState) {
       this.gameState.lastDiceResult = result;
+      console.log('🎲 gameState.lastDiceResult 已设置:', this.gameState.lastDiceResult);
+    } else {
+      console.error('🎲 无法设置 lastDiceResult - gameState 为空');
     }
     
     this.eventEmitter.emit('dice:rolled', result);
@@ -243,6 +324,8 @@ export class GameEngine {
     const oldPosition = player.position;
     player.position = (player.position + steps) % this.gameState.board.length;
 
+    console.log(`玩家 ${player.name} 从位置 ${oldPosition} 移动 ${steps} 步到位置 ${player.position}`);
+
     // 检查是否经过起点
     if (player.position < oldPosition || steps >= this.gameState.board.length) {
       const passStartBonus = 2000; // TODO: 从配置获取
@@ -267,6 +350,7 @@ export class GameEngine {
     // 触发位置事件
     const cell = this.gameState.board[player.position];
     if (cell) {
+      console.log(`到达格子: ${cell.name} (位置 ${player.position}, 类型: ${cell.type})`);
       await this.handleCellLanding(player, cell);
     }
 
@@ -462,7 +546,7 @@ export class GameEngine {
     // 使用 gameRules 或 gameSettings 或默认值
     const startingMoney = config.gameRules?.startingMoney 
       || config.gameSettings?.startingMoney 
-      || 1500; // 默认起始金钱
+      || 15000; // 默认起始金钱 - 提高到合理水平
     
     return {
       id: 'human_player',
@@ -496,7 +580,7 @@ export class GameEngine {
     // 使用 gameRules 或 gameSettings 或默认值
     const startingMoney = gameConfig.gameRules?.startingMoney 
       || gameConfig.gameSettings?.startingMoney 
-      || 1500; // 默认起始金钱
+      || 15000; // 默认起始金钱 - 提高到合理水平
       
     return configs.map(config => ({
       id: config.id,
@@ -566,12 +650,26 @@ export class GameEngine {
       return { type: 'chance' as const, name: '机会', color: '#FF69B4', description: '抽取机会卡', price: undefined, rent: undefined };
     }
     
-    // 地产格子
-    const basePrice = 1000 + (position * 150);
+    // 地产格子 - 使用统一的价格计算系统
+    const basePrice = getPropertyPrice(position);
+    const propertyType = getPropertyType(position);
+    
+    if (basePrice === 0 || propertyType === 'special') {
+      // 特殊位置，不是可购买地产
+      return { 
+        type: 'special' as const, 
+        name: `特殊位置${position}`, 
+        color: '#C0C0C0', 
+        description: '特殊功能格子', 
+        price: undefined, 
+        rent: undefined 
+      };
+    }
+    
     const baseRent = Math.floor(basePrice * 0.1);
     
     return {
-      type: 'property' as const,
+      type: propertyType as any,
       name: `${this.getPropertyName(position)}`,
       color: this.getPropertyColor(position),
       description: `优质地产，投资首选`,
@@ -780,7 +878,9 @@ export class GameEngine {
     if (!this.gameState) return;
 
     const diceResult = this.rollDice();
+    console.log('🎲 handleRollDiceAction - 骰子结果:', diceResult);
     const player = this.gameState.players.find(p => p.id === action.playerId);
+    console.log('🎲 玩家信息:', player?.name, '移动前位置:', player?.position);
     
     if (player) {
       // 移动玩家
@@ -794,29 +894,77 @@ export class GameEngine {
         // 检查新位置需要什么操作
         const position = player.position;
         const propertyType = getPropertyType(position);
+        const price = getPropertyPrice(position);
+        
+        console.log(`==== 掷骰子后状态检查 ====`);
+        console.log(`玩家: ${player.name}`);
+        console.log(`位置: ${position}`);
+        console.log(`地产类型: ${propertyType}`);
+        console.log(`地产价格: ${price}`);
+        console.log(`玩家金钱: ${player.money} (足够购买: ${player.money >= price})`);
+        console.log(`玩家现有地产: ${player.properties?.length || 0} 处`);
         
         if (propertyType === 'property' || propertyType === 'station' || propertyType === 'utility' || propertyType === 'zodiac_temple') {
           // 检查是否可以购买或需要支付租金
-          if (canBuyProperty(position, player)) {
+          const canBuy = canBuyProperty(position, player);
+          const needPayRent = needsToPayRent(position, player, this.gameState?.players || []);
+          
+          console.log(`可购买: ${canBuy}, 需付租金: ${needPayRent}`);
+          
+          if (canBuy) {
             if (this.gameState) {
               this.gameState.phase = 'property_action';
+              console.log('✅ 切换到地产购买阶段 (property_action)');
+            } else {
+              console.error('⚠️ gameState is undefined when trying to set property_action phase');
+              console.error('⚠️ 购买检查失败 - 调试信息:', { canBuy, needPayRent, position, propertyType, price });
+              return;
             }
-          } else if (needsToPayRent(position, player, this.gameState?.players || [])) {
+          } else if (needPayRent) {
             if (this.gameState) {
               this.gameState.phase = 'pay_rent';
+              console.log('✅ 切换到支付租金阶段 (pay_rent)');
+            } else {
+              console.error('⚠️ gameState is undefined when trying to set pay_rent phase');
+              console.error('⚠️ 租金检查失败 - 调试信息:', { canBuy, needPayRent, position, propertyType, price });
+              return;
             }
           } else {
             if (this.gameState) {
               this.gameState.phase = 'end_turn';
+              console.log('✅ 地产已被玩家拥有，直接结束回合 (end_turn)');
+            } else {
+              console.error('⚠️ gameState is undefined when trying to set end_turn phase');
+              console.error('⚠️ 地产所有权检查失败 - 调试信息:', { canBuy, needPayRent, position, propertyType, price });
+              return;
             }
           }
         } else {
           // 特殊位置，直接结束回合
           if (this.gameState) {
             this.gameState.phase = 'end_turn';
+            console.log(`✅ 特殊位置，直接结束回合 (end_turn)`);
           } else {
-            console.error('GameState is undefined when trying to set phase');
+            console.error('⚠️ gameState is undefined when trying to set phase');
+            console.error('⚠️ 调试信息 - 当前状态:', {
+              gameStateExists: !!this.gameState,
+              gameStateType: typeof this.gameState,
+              isRunning: this.isRunning,
+              playerName: player?.name,
+              position: player?.position,
+              propertyType,
+              price
+            });
+            // 紧急恢复 - 创建基本的gameState结构
+            if (!this.gameState && this.createEmergencyGameState) {
+              console.log('🚨 尝试紧急恢复 gameState');
+              this.createEmergencyGameState();
+            }
+            return;
           }
+        }
+        if (this.gameState) {
+          console.log(`==== 最终阶段: ${this.gameState.phase} ====`);
         }
       }
     }
@@ -847,6 +995,14 @@ export class GameEngine {
         rent: Math.floor(price * 0.1)
       });
       
+      // 更新棋盘格子的拥有者 - 这是关键！
+      const cell = this.gameState.board[position];
+      if (cell) {
+        cell.ownerId = player.id;
+        cell.price = price;
+        cell.rent = Math.floor(price * 0.1);
+      }
+      
       // 更新统计
       player.statistics.propertiesBought++;
       player.statistics.moneySpent += price;
@@ -857,7 +1013,11 @@ export class GameEngine {
       this.gameState.phase = 'end_turn';
       console.log(`玩家 ${player.name} 购买了位置 ${position} 的地产，花费 $${price}，当前拥有 ${player.properties.length} 处地产`);
       console.log('玩家地产列表:', player.properties);
-      console.log('完整玩家对象:', JSON.stringify(player, null, 2));
+      console.log('棋盘格子状态:', cell);
+    } else {
+      console.log(`购买失败: canBuy=${canBuy}, price=${price}, playerMoney=${player.money}`);
+      // 购买失败，直接结束回合
+      this.gameState.phase = 'end_turn';
     }
   }
 
@@ -1055,12 +1215,24 @@ export class GameEngine {
   private async handleSpecialLanding(player: Player, cell: BoardCell): Promise<void> {
     if (cell.name === '入狱') {
       // 使用新的监狱系统
-      const result = this.specialSystemManager.handlePlayerAction(
-        player.id, 'prison', { action: 'arrest', crime: 'trespassing' }, this.gameState!
-      );
-      if (result.success) {
-        this.gameState = result.gameState;
-        this.eventEmitter.emit('player:arrested', { player, cell, result });
+      if (this.specialSystemManager) {
+        const result = this.specialSystemManager.handlePlayerAction(
+          player.id, 'prison', { action: 'arrest', crime: 'trespassing' }, this.gameState!
+        );
+        if (result.success && result.gameState) {
+          this.gameState = result.gameState;
+          this.eventEmitter.emit('player:arrested', { player, cell, result });
+        } else {
+          console.error('⚠️ specialSystemManager返回了无效的gameState:', result);
+          // 保持原有gameState不变，仅发出警告
+          this.eventEmitter.emit('player:arrested', { player, cell, result: { success: false, error: 'Invalid gameState returned' } });
+        }
+      } else {
+        console.warn('⚠️ specialSystemManager未初始化，使用简单入狱逻辑');
+        // 简单的入狱处理：设置玩家为在监狱状态
+        player.position = 10; // 监狱位置
+        // 可以添加其他入狱逻辑，比如罚款等
+        this.eventEmitter.emit('player:arrested', { player, cell, result: { success: true, message: 'Player sent to jail' } });
       }
     } else if (cell.name === '免费停车') {
       // 免费停车，什么都不做
@@ -1177,25 +1349,66 @@ export class GameEngine {
   }
 
   /**
+   * 检查胜利条件（返回获胜者）
+   */
+  private checkWinCondition(): Player | null {
+    if (!this.gameState) return null;
+
+    // 检查是否只剩一个玩家有钱
+    const alivePlayers = this.gameState.players.filter(p => p.money > 0);
+    if (alivePlayers.length === 1) {
+      return alivePlayers[0];
+    }
+
+    // 检查回合数限制
+    if (this.gameState.round >= 100) { // 最大回合数
+      return this.gameState.players.reduce((prev, current) => 
+        prev.money > current.money ? prev : current
+      );
+    }
+
+    return null;
+  }
+
+  /**
+   * 切换到下一个玩家
+   */
+  private nextPlayer(): void {
+    if (!this.gameState) return;
+
+    this.gameState.currentPlayerIndex = (this.gameState.currentPlayerIndex + 1) % this.gameState.players.length;
+    
+    // 如果回到第一个玩家，回合数+1
+    if (this.gameState.currentPlayerIndex === 0) {
+      this.gameState.round++;
+    }
+
+    this.gameState.turn++;
+  }
+
+  /**
    * 更新AI玩家
+   * 注意：AI逻辑现在由GameLoop组件处理，这里禁用以避免冲突
    */
   private async updateAIPlayers(): Promise<void> {
     if (!this.gameState) return;
 
     const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
     
-    // 如果当前玩家是AI且处于需要决策的阶段
+    // AI逻辑现在由GameLoop组件管理，避免双重AI系统冲突
+    console.log(`🤖 GameEngine AI系统已禁用，当前玩家: ${currentPlayer.name}${currentPlayer.isHuman ? ' (人类)' : ' (AI)'}`);
+    
+    // 如果需要使用内置AI系统，可以重新启用以下代码：
+    /*
     if (!currentPlayer.isHuman && this.gameState.phase === 'roll_dice') {
       try {
-        // 获取AI决策
         const decision = await this.aiManager.makeDecision(currentPlayer.id, {
           gameState: this.gameState,
           availableActions: ['roll_dice'],
-          timeLimit: 3000 // 3秒决策时间
+          timeLimit: 3000
         });
 
         if (decision && decision.action) {
-          // 执行AI决策
           await this.processPlayerAction({
             type: decision.action.type,
             playerId: currentPlayer.id,
@@ -1204,13 +1417,13 @@ export class GameEngine {
         }
       } catch (error) {
         console.error('AI决策失败:', error);
-        // 默认行为：AI掷骰子
         await this.processPlayerAction({
           type: 'roll_dice',
           playerId: currentPlayer.id
         });
       }
     }
+    */
   }
 
   /**
@@ -1235,7 +1448,13 @@ export class GameEngine {
    * 处理玩家操作
    */
   async processPlayerAction(action: any): Promise<any> {
+    console.log('🔍 processPlayerAction 被调用');
+    console.log('🔍 this.gameState 状态:', this.gameState ? '已初始化' : '未初始化');
+    console.log('🔍 this.gameState 是否为 null:', this.gameState === null);
+    console.log('🔍 this.gameState 是否为 undefined:', this.gameState === undefined);
+    
     if (!this.gameState) {
+      console.error('❌ GameEngine.gameState 为空！');
       throw new Error('Game not initialized');
     }
 
@@ -1256,6 +1475,28 @@ export class GameEngine {
         actionPlayerId: action.playerId
       });
       throw new Error(`Invalid action: ${action.type}`);
+    }
+
+    // 验证业务逻辑
+    const businessValidation = this.validateActionBusinessLogic(playerAction);
+    if (!businessValidation.valid) {
+      console.log(`Business logic validation failed:`, {
+        actionType: action.type,
+        reason: businessValidation.reason,
+        currentPlayer: this.gameState.players[this.gameState.currentPlayerIndex]?.name,
+        canNegotiate: businessValidation.canNegotiate
+      });
+      
+      // 如果可以协商购买，返回特殊的错误信息
+      if (businessValidation.canNegotiate) {
+        const error = new Error(`Invalid action: ${businessValidation.reason}`);
+        (error as any).canNegotiate = true;
+        (error as any).owner = businessValidation.owner;
+        (error as any).businessValidation = businessValidation;
+        throw error;
+      }
+      
+      throw new Error(`Invalid action: ${businessValidation.reason}`);
     }
 
     // 添加到动作队列
@@ -1279,29 +1520,357 @@ export class GameEngine {
     
     // 检查是否是当前玩家的操作
     if (action.playerId !== currentPlayer.id && !action.data?.skipPlayerCheck) {
+      console.log(`Player mismatch: expected ${currentPlayer.id}, got ${action.playerId}`);
       return false;
     }
 
-    // end_turn 在任何阶段都应该被允许
-    if (action.type === 'end_turn') {
-      return true;
-    }
-
-    // 根据游戏阶段验证其他操作
+    // 根据游戏阶段验证操作
     switch (this.gameState.phase) {
       case 'roll_dice':
-        return action.type === 'roll_dice';
+        // 在掷骰子阶段，只允许掷骰子和使用技能
+        return ['roll_dice', 'use_skill'].includes(action.type);
+      
+      case 'move_player':
+        // 移动阶段通常是自动的，但允许某些操作
+        return ['use_skill', 'end_turn'].includes(action.type);
+      
       case 'process_cell':
-        return ['buy_property', 'pay_rent', 'use_skill', 'skip_purchase', 'upgrade_property', 'skip_upgrade'].includes(action.type);
+        // 处理格子阶段允许的操作
+        return [
+          'buy_property', 'skip_purchase', 
+          'pay_rent', 'upgrade_property', 'skip_upgrade',
+          'use_skill', 'event_choice'
+        ].includes(action.type);
+      
       case 'property_action':
-        return ['buy_property', 'skip_purchase', 'upgrade_property', 'skip_upgrade'].includes(action.type);
+        // 地产操作阶段 - 包括特殊位置的end_turn
+        return ['buy_property', 'skip_purchase', 'upgrade_property', 'skip_upgrade', 'end_turn', 'use_skill'].includes(action.type);
+      
       case 'pay_rent':
-        return action.type === 'pay_rent';
+        // 支付租金阶段
+        return ['pay_rent', 'use_skill'].includes(action.type);
+      
+      case 'handle_event':
+        // 事件处理阶段
+        return ['event_choice', 'use_skill'].includes(action.type);
+      
       case 'end_turn':
-        return true; // 在 end_turn 阶段允许任何操作
+        // 结束回合阶段允许任何操作（清理阶段）
+        return true;
+      
+      case 'check_win':
+        // 检查胜利条件阶段，通常只允许结束回合
+        return action.type === 'end_turn';
+      
       default:
+        console.log(`Unknown phase: ${this.gameState.phase}`);
         return false;
     }
+  }
+
+  /**
+   * 验证操作的业务逻辑
+   */
+  private validateActionBusinessLogic(action: PlayerAction): { valid: boolean; reason?: string } {
+    if (!this.gameState) return { valid: false, reason: 'Game state not initialized' };
+
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+    const currentPosition = currentPlayer.position;
+    const board = this.gameState.board || [];
+    const currentCell = board[currentPosition];
+
+    switch (action.type) {
+      case 'roll_dice':
+        // 检查玩家是否已经掷过骰子
+        if (this.gameState.phase !== 'roll_dice') {
+          return { valid: false, reason: 'Not in dice rolling phase' };
+        }
+        break;
+
+      case 'buy_property':
+        // 检查当前格子是否是可购买的地产/车站/公用事业
+        if (!currentCell || !this.isPurchasableType(currentCell.type)) {
+          return { valid: false, reason: `Current cell is not purchasable (type: ${currentCell?.type})` };
+        }
+        // 检查地产是否已被其他玩家购买
+        if (currentCell.ownerId && currentCell.ownerId !== currentPlayer.id) {
+          const owner = this.gameState.players.find(p => p.id === currentCell.ownerId);
+          const ownerName = owner ? owner.name : '其他玩家';
+          return { 
+            valid: false, 
+            reason: `Property owned by ${ownerName}`,
+            canNegotiate: true, // 标记可以协商购买
+            owner: owner
+          };
+        }
+        // 检查玩家是否已经拥有该地产
+        if (currentCell.ownerId === currentPlayer.id) {
+          return { valid: false, reason: 'You already own this property' };
+        }
+        // 检查玩家是否有足够的金钱
+        const price = getPropertyPrice(currentPosition);
+        if (currentPlayer.money < price) {
+          return { valid: false, reason: 'Insufficient funds' };
+        }
+        break;
+
+      case 'pay_rent':
+        // 检查是否需要支付租金
+        if (!currentCell || !this.isPurchasableType(currentCell.type) || !currentCell.ownerId) {
+          return { valid: false, reason: 'No rent to pay' };
+        }
+        // 检查玩家是否是地产拥有者（不需要支付自己的租金）
+        if (currentCell.ownerId === currentPlayer.id) {
+          return { valid: false, reason: 'Cannot pay rent to yourself' };
+        }
+        // 检查玩家是否有足够的金钱支付租金
+        const rentAmount = currentCell.rent || 0;
+        if (currentPlayer.money < rentAmount) {
+          return { valid: false, reason: 'Insufficient funds for rent' };
+        }
+        break;
+
+      case 'upgrade_property':
+        // 检查当前格子是否是玩家拥有的可升级地产
+        if (!currentCell || !this.isPurchasableType(currentCell.type) || currentCell.ownerId !== currentPlayer.id) {
+          return { valid: false, reason: 'Not your property or not upgradable' };
+        }
+        // 检查是否已经达到最大升级等级
+        const maxLevel = 5; // 假设最大等级是5
+        if ((currentCell.level || 0) >= maxLevel) {
+          return { valid: false, reason: 'Property at maximum level' };
+        }
+        // 检查升级费用
+        const upgradePrice = (currentCell.price || 0) * 0.5; // 假设升级费用是原价的一半
+        if (currentPlayer.money < upgradePrice) {
+          return { valid: false, reason: 'Insufficient funds for upgrade' };
+        }
+        break;
+
+      case 'use_skill':
+        // 检查技能是否存在且可用
+        const skillId = action.data?.skillId;
+        if (!skillId) {
+          return { valid: false, reason: 'No skill specified' };
+        }
+        
+        const playerSkills = currentPlayer.skills || [];
+        const skill = playerSkills.find(s => s.id === skillId);
+        if (!skill) {
+          return { valid: false, reason: 'Skill not found' };
+        }
+        
+        // 检查技能冷却时间
+        if (skill.cooldown && skill.cooldown > Date.now()) {
+          return { valid: false, reason: 'Skill on cooldown' };
+        }
+        
+        // 检查技能使用条件（如果有）
+        if (skill.cost && currentPlayer.money < skill.cost) {
+          return { valid: false, reason: 'Insufficient funds for skill' };
+        }
+        break;
+
+      case 'end_turn':
+        // 结束回合总是允许的，但可以检查是否有未完成的必需操作
+        if (this.gameState.phase === 'pay_rent') {
+          // 如果在支付租金阶段，必须先支付租金
+          const rentAmount = currentCell?.rent || 0;
+          if (currentCell?.owner && currentCell.owner !== currentPlayer.id && rentAmount > 0) {
+            return { valid: false, reason: 'Must pay rent before ending turn' };
+          }
+        }
+        break;
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * 统一的游戏状态转换管理
+   */
+  private transitionToPhase(newPhase: GamePhase, reason?: string): void {
+    if (!this.gameState) return;
+
+    const currentPhase = this.gameState.phase;
+    
+    console.log(`Game phase transition: ${currentPhase} -> ${newPhase}${reason ? ` (${reason})` : ''}`);
+    
+    // 验证状态转换是否合法
+    if (!this.isValidPhaseTransition(currentPhase, newPhase)) {
+      console.warn(`Invalid phase transition: ${currentPhase} -> ${newPhase}`);
+      return;
+    }
+
+    // 执行状态转换前的清理工作
+    this.onPhaseExit(currentPhase);
+    
+    // 设置新状态
+    this.gameState.phase = newPhase;
+    this.gameState.lastUpdateTime = Date.now();
+    
+    // 执行新状态的初始化工作
+    this.onPhaseEnter(newPhase);
+    
+    // 发出状态转换事件
+    this.eventEmitter.emit('game:phase_changed', {
+      from: currentPhase,
+      to: newPhase,
+      timestamp: Date.now(),
+      reason
+    });
+  }
+
+  /**
+   * 验证状态转换是否合法
+   */
+  private isValidPhaseTransition(from: GamePhase, to: GamePhase): boolean {
+    const validTransitions: Record<GamePhase, GamePhase[]> = {
+      'roll_dice': ['move_player', 'end_turn', 'roll_dice'], // 允许重新掷骰子
+      'move_player': ['process_cell', 'end_turn'],
+      'process_cell': ['property_action', 'pay_rent', 'handle_event', 'end_turn'],
+      'property_action': ['end_turn'],
+      'pay_rent': ['end_turn'],
+      'handle_event': ['process_cell', 'end_turn'],
+      'end_turn': ['roll_dice', 'check_win'],
+      'check_win': ['roll_dice', 'end_turn']
+    };
+
+    return validTransitions[from]?.includes(to) ?? false;
+  }
+
+  /**
+   * 状态退出时的清理工作
+   */
+  private onPhaseExit(phase: GamePhase): void {
+    switch (phase) {
+      case 'roll_dice':
+        // 清理掷骰子相关的临时状态
+        break;
+      case 'move_player':
+        // 清理移动动画相关状态
+        break;
+      case 'process_cell':
+        // 清理格子处理相关状态
+        break;
+    }
+  }
+
+  /**
+   * 状态进入时的初始化工作
+   */
+  private onPhaseEnter(phase: GamePhase): void {
+    if (!this.gameState) return;
+
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+    
+    switch (phase) {
+      case 'roll_dice':
+        // 重置掷骰子状态，允许玩家掷骰子
+        console.log(`${currentPlayer?.name} 的回合开始，准备掷骰子`);
+        break;
+        
+      case 'move_player':
+        // 开始移动动画
+        console.log(`${currentPlayer?.name} 开始移动`);
+        break;
+        
+      case 'process_cell':
+        // 处理当前格子的逻辑 - 暂时禁用自动处理避免循环
+        console.log(`${currentPlayer?.name} 到达格子，等待处理`);
+        break;
+        
+      case 'property_action':
+        console.log(`${currentPlayer?.name} 可以选择购买或升级地产`);
+        break;
+        
+      case 'pay_rent':
+        console.log(`${currentPlayer?.name} 需要支付租金`);
+        break;
+        
+      case 'handle_event':
+        console.log(`${currentPlayer?.name} 触发了事件`);
+        break;
+        
+      case 'end_turn':
+        console.log(`${currentPlayer?.name} 的回合结束`);
+        // 不在这里自动处理回合结束，应该由外部逻辑控制
+        break;
+        
+      case 'check_win':
+        this.checkWinCondition();
+        break;
+    }
+  }
+
+  /**
+   * 处理当前格子的逻辑
+   */
+  private processCurrentCell(): void {
+    if (!this.gameState) return;
+
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+    const position = currentPlayer.position;
+    const board = this.gameState.board || [];
+    const currentCell = board[position];
+
+    if (!currentCell) {
+      this.transitionToPhase('end_turn', 'Invalid cell');
+      return;
+    }
+
+    // 根据格子类型决定下一步
+    switch (currentCell.type) {
+      case 'property':
+        if (canBuyProperty(position, currentPlayer)) {
+          this.gameState.phase = 'property_action';
+        } else if (needsToPayRent(position, currentPlayer, this.gameState.players)) {
+          this.gameState.phase = 'pay_rent';
+        } else {
+          this.gameState.phase = 'end_turn';
+        }
+        break;
+        
+      case 'chance':
+      case 'community':
+        this.gameState.phase = 'handle_event';
+        break;
+        
+      case 'tax':
+        // 自动扣税
+        const taxAmount = currentCell.tax || 200;
+        currentPlayer.money = Math.max(0, currentPlayer.money - taxAmount);
+        console.log(`${currentPlayer.name} 支付了 $${taxAmount} 的税费`);
+        this.gameState.phase = 'end_turn';
+        break;
+        
+      case 'jail':
+        // 访问监狱，不是入狱
+        this.gameState.phase = 'end_turn';
+        break;
+        
+      default:
+        this.gameState.phase = 'end_turn';
+        break;
+    }
+  }
+
+  /**
+   * 处理回合结束
+   */
+  private processEndTurn(): void {
+    if (!this.gameState) return;
+
+    // 检查胜利条件
+    const winner = this.checkWinCondition();
+    if (winner) {
+      this.gameState.phase = 'check_win';
+      return;
+    }
+
+    // 切换到下一个玩家
+    this.nextPlayer();
+    this.gameState.phase = 'roll_dice';
   }
 
   /**
@@ -1333,8 +1902,8 @@ export class GameEngine {
     
     const result = await this.saveManager.loadSave(saveId);
     
-    if (!result.success || !result.data) {
-      throw new Error(result.error || 'Failed to load game');
+    if (!result.success || !result.data || !result.data.gameState) {
+      throw new Error(result.error || 'Failed to load game or invalid gameState');
     }
 
     this.gameState = result.data.gameState;
@@ -1357,9 +1926,90 @@ export class GameEngine {
   }
 
   /**
+   * 协商购买地产
+   */
+  async negotiatePropertyPurchase(
+    buyerId: string, 
+    sellerId: string, 
+    position: number, 
+    offerPrice: number
+  ): Promise<{ success: boolean; message: string }> {
+    if (!this.gameState) {
+      return { success: false, message: 'Game not initialized' };
+    }
+
+    const buyer = this.gameState.players.find(p => p.id === buyerId);
+    const seller = this.gameState.players.find(p => p.id === sellerId);
+    
+    if (!buyer || !seller) {
+      return { success: false, message: 'Player not found' };
+    }
+
+    // 检查买家资金
+    if (buyer.money < offerPrice) {
+      return { success: false, message: 'Insufficient funds' };
+    }
+
+    // 找到要转让的地产
+    const property = seller.properties?.find(p => p.position === position);
+    if (!property) {
+      return { success: false, message: 'Property not found' };
+    }
+
+    // 简化的AI接受逻辑
+    const basePrice = this.getPropertyPrice(position);
+    const acceptanceThreshold = basePrice * 1.5;
+    
+    if (offerPrice >= acceptanceThreshold) {
+      // 执行转让
+      // 从卖家移除地产
+      seller.properties = seller.properties?.filter(p => p.position !== position) || [];
+      
+      // 给买家添加地产
+      if (!buyer.properties) buyer.properties = [];
+      buyer.properties.push(property);
+      
+      // 资金转移
+      buyer.money -= offerPrice;
+      seller.money += offerPrice;
+      
+      // 更新棋盘格子拥有者
+      const cell = this.gameState.board[position];
+      if (cell) {
+        cell.ownerId = buyer.id;
+      }
+      
+      // 更新统计
+      buyer.statistics.propertiesBought++;
+      buyer.statistics.moneySpent += offerPrice;
+      seller.statistics.propertiesSold++;
+      seller.statistics.moneyEarned += offerPrice;
+      
+      // 发出事件
+      this.eventEmitter.emit('property:transferred', { 
+        buyer, seller, property, price: offerPrice 
+      });
+      
+      this.updateGameState();
+      
+      return { 
+        success: true, 
+        message: `${seller.name} 接受了 $${offerPrice.toLocaleString()} 的报价！` 
+      };
+    } else {
+      return { 
+        success: false, 
+        message: `${seller.name} 拒绝了你的报价，要求至少 $${acceptanceThreshold.toLocaleString()}` 
+      };
+    }
+  }
+
+  /**
    * 销毁游戏引擎
    */
   destroy(): void {
+    console.log('🔥 GameEngine.destroy() 被调用 - 将清空 gameState');
+    console.trace('🔥 destroy() 调用堆栈:');
     this.stopGameLoop();
     this.isRunning = false;
     this.gameState = null;
@@ -1400,10 +2050,12 @@ export class GameEngine {
       playerId, systemType, actionData, this.gameState
     );
 
-    if (result.success) {
+    if (result.success && result.gameState) {
       this.gameState = result.gameState;
       this.specialSystemManager.updateSystemStatus(this.gameState);
       this.updateGameState();
+    } else {
+      console.error('⚠️ activateSpecialSystem返回了无效的gameState:', result);
       this.eventEmitter.emit('special:action_executed', { playerId, systemType, actionData, result });
     }
 
@@ -1441,10 +2093,12 @@ export class GameEngine {
     }
 
     const result = this.specialSystemManager.resetAllSystems(this.gameState);
-    if (result.success) {
+    if (result.success && result.gameState) {
       this.gameState = result.gameState;
       this.updateGameState();
       this.eventEmitter.emit('special:systems_reset');
+    } else {
+      console.error('⚠️ resetSpecialSystems返回了无效的gameState:', result);
     }
   }
 

@@ -19,34 +19,46 @@ export interface RentInfo {
  * 获取地产价格
  */
 export function getPropertyPrice(position: number): number {
-  // 外环地产价格
-  if (position < 100) {
-    // 特殊位置没有价格
-    if ([0, 10, 20, 30].includes(position)) return 0; // 起点、监狱、免费停车、入狱
-    if ([2, 7, 17, 22, 33, 36].includes(position)) return 0; // 机会、命运
-    
-    // 车站和电厂
-    if ([5, 15, 25, 35].includes(position)) return 200; // 车站
-    if ([12, 28].includes(position)) return 150; // 电厂
-    
-    // 普通地产
-    const propertyPrices = [60, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 350, 400];
-    const propertyPositions = [1, 3, 4, 6, 8, 9, 11, 13, 14, 16, 18, 19, 21, 23, 24, 26, 27, 29, 31, 32, 34, 37, 38, 39];
-    const index = propertyPositions.indexOf(position);
-    return index >= 0 ? propertyPrices[index % propertyPrices.length] : 100;
-  }
+  // 标准40格大富翁棋盘
+  if (position < 0 || position >= 40) return 0;
   
-  // 内环地产价格
-  const innerIndex = position - 100;
-  if ([0, 6, 12, 18].includes(innerIndex)) return 0; // 特殊位置
-  if ([3, 9, 15, 21].includes(innerIndex)) return 0; // 传送门
-  if ([1, 7, 13, 19].includes(innerIndex)) return 300; // 生肖殿
+  // 特殊位置没有价格
+  if ([0, 10, 20, 30].includes(position)) return 0; // 起点、监狱、免费停车、入狱
+  if ([2, 7, 17, 22, 33, 36].includes(position)) return 0; // 机会、命运
+  if ([4, 38].includes(position)) return 0; // 税收
   
-  // 内环普通地产
-  const innerPrices = [400, 450, 500, 550, 600, 650, 700, 750, 800];
-  const innerPropertyPositions = [2, 4, 5, 8, 10, 11, 14, 16, 17, 20, 22, 23];
-  const innerIndex2 = innerPropertyPositions.indexOf(innerIndex);
-  return innerIndex2 >= 0 ? innerPrices[innerIndex2 % innerPrices.length] : 400;
+  // 车站和公用事业
+  if ([5, 15, 25, 35].includes(position)) return 200; // 车站
+  if ([12, 28].includes(position)) return 150; // 电厂/水厂
+  
+  // 普通地产 - 简化为基于位置的递增价格
+  // 第一组 (1,3): 60-80
+  if (position === 1) return 60;
+  if (position === 3) return 80;
+  
+  // 第二组 (6,8,9): 100-140  
+  if ([6, 8, 9].includes(position)) return 100 + (position - 6) * 20;
+  
+  // 第三组 (11,13,14): 140-180
+  if ([11, 13, 14].includes(position)) return 140 + (position - 11) * 20;
+  
+  // 第四组 (16,18,19): 180-220
+  if ([16, 18, 19].includes(position)) return 180 + (position - 16) * 20;
+  
+  // 第五组 (21,23,24): 220-260
+  if ([21, 23, 24].includes(position)) return 220 + (position - 21) * 20;
+  
+  // 第六组 (26,27,29): 260-300
+  if ([26, 27, 29].includes(position)) return 260 + (position - 26) * 20;
+  
+  // 第七组 (31,32,34): 300-350
+  if ([31, 32, 34].includes(position)) return 300 + (position - 31) * 25;
+  
+  // 第八组 (37,39): 350-400
+  if ([37, 39].includes(position)) return 350 + (position - 37) * 25;
+  
+  // 默认返回0（特殊位置）
+  return 0;
 }
 
 /**
@@ -114,17 +126,15 @@ export function canUpgradeProperty(position: number, player: any): boolean {
  * 获取地产类型
  */
 export function getPropertyType(position: number): string {
-  if (position < 100) {
-    if ([0, 10, 20, 30].includes(position)) return 'special';
-    if ([2, 7, 17, 22, 33, 36].includes(position)) return 'chance';
-    if ([5, 15, 25, 35].includes(position)) return 'station';
-    if ([12, 28].includes(position)) return 'utility';
-    return 'property';
-  } else {
-    const innerIndex = position - 100;
-    if ([0, 6, 12, 18].includes(innerIndex)) return 'special';
-    if ([3, 9, 15, 21].includes(innerIndex)) return 'portal';
-    if ([1, 7, 13, 19].includes(innerIndex)) return 'zodiac_temple';
-    return 'property';
-  }
+  // 标准40格大富翁棋盘
+  if (position < 0 || position >= 40) return 'special';
+  
+  if ([0, 10, 20, 30].includes(position)) return 'special'; // 起点、监狱、免费停车、入狱
+  if ([2, 7, 17, 22, 33, 36].includes(position)) return 'chance'; // 机会、命运
+  if ([4, 38].includes(position)) return 'tax'; // 税收
+  if ([5, 15, 25, 35].includes(position)) return 'station'; // 车站
+  if ([12, 28].includes(position)) return 'utility'; // 电厂/水厂
+  
+  // 所有其他位置都是可购买的地产
+  return 'property';
 }
