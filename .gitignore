@@ -127,3 +127,17 @@ config/local.js
 *.backup
 *.old
 *.temp
+/.lintstagedrc
+/.prettierignore
+/.prettierrc
+/Day1-技能系统架构完成总结.md
+/Day2-交易和抵押系统实现总结.md
+/Day3-监狱和特殊机制完成总结.md
+/Day4-游戏平衡和数值调优完成总结.md
+/Day5-综合游戏系统集成完成总结.md
+/INTEGRATION_TEST_REPORT.md
+/README-SECURITY.md
+/强化学习AI架构实现总结.md
+/深度学习策略网络实现总结.md
+/第二周游戏循环集成总结.md
+/高级AI组件集成与优化总结.md
