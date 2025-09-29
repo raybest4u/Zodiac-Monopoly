@@ -6,7 +6,8 @@ import type {
   PlayerAction,
   BoardCell,
   PlayerSkill,
-  ZodiacSign
+  ZodiacSign,
+  GamePhase
 } from '../types/game';
 import type { AIOpponentConfig } from '../types/ai';
 import type { GameConfig } from '../types/storage';
@@ -32,6 +33,8 @@ export class GameEngine {
   private aiManager: AIManager;
   private specialSystemManager: UnifiedSpecialSystemManager;
   private balanceDashboard: BalanceDashboard;
+  private aiExecuting: boolean = false; // 🔒 AI执行锁
+  private lastAIActionTime: number = 0; // 上次AI行动时间
 
   constructor() {
     this.eventEmitter = new EventEmitter();
@@ -86,6 +89,16 @@ export class GameEngine {
       this.gameState.board = this.generateBoard();
       console.log('🏗️ 棋盘生成完成，格子数量:', this.gameState.board.length);
       console.log('🏗️ 位置3的格子信息:', this.gameState.board[3]);
+      
+      // 验证棋盘完整性
+      const typelessCells = this.gameState.board.filter((cell, index) => !cell.type);
+      if (typelessCells.length > 0) {
+        console.error('⚠️ 发现没有type属性的格子:', typelessCells);
+      } else {
+        console.log('✅ 所有格子都有type属性');
+      }
+      
+      console.log('🏗️ 前5个格子的类型:', this.gameState.board.slice(0, 5).map(c => ({ pos: c.position, type: c.type, name: c.name })));
       
       // 设置初始状态
       this.gameState.status = 'waiting';
@@ -176,21 +189,29 @@ export class GameEngine {
    * 开始游戏
    */
   async startGame(): Promise<void> {
+    console.log('🎮 GameEngine.startGame() 被调用');
+    console.log('🎮 当前游戏状态:', this.gameState ? this.gameState.status : 'null');
+    
     if (!this.gameState || this.gameState.status !== 'waiting') {
-      throw new Error('Game is not in waiting state');
+      console.error('❌ 游戏不在等待状态, 当前状态:', this.gameState?.status);
+      throw new Error(`Game is not in waiting state, current: ${this.gameState?.status}`);
     }
     
-    console.log('Starting game...');
+    console.log('✅ 开始游戏...');
     
     this.gameState.status = 'playing';
     this.isRunning = true;
     this.saveGameState();
     
+    console.log('✅ 游戏状态已更新为 playing');
+    
     // 发布游戏开始事件
     this.eventEmitter.emit('game:started', this.gameState);
+    console.log('✅ 已发布 game:started 事件');
     
     // 开始游戏主循环
     await this.startGameLoop();
+    console.log('✅ 游戏主循环已启动');
   }
 
   /**
@@ -359,19 +380,27 @@ export class GameEngine {
   }
 
   /**
-   * 下一个玩家回合
+   * 下一个玩家回合 (公共方法，可用于调试)
    */
   async nextTurn(): Promise<void> {
     if (!this.gameState) return;
 
     // 结束当前玩家回合
     const currentPlayer = this.getCurrentPlayer();
+    console.log(`🔄 结束回合: ${currentPlayer?.name} (索引: ${this.gameState.currentPlayerIndex})`);
     if (currentPlayer) {
       this.eventEmitter.emit('turn:end', currentPlayer);
     }
 
     // 切换到下一个玩家
+    const oldIndex = this.gameState.currentPlayerIndex;
+    const oldPlayer = this.gameState.players[oldIndex];
     this.gameState.currentPlayerIndex = (this.gameState.currentPlayerIndex + 1) % this.gameState.players.length;
+    const switchedPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+    
+    console.log(`🔄 玩家切换: ${oldIndex} -> ${this.gameState.currentPlayerIndex}`);
+    console.log(`🔄 从: ${oldPlayer?.name} (${oldPlayer?.id}, ${oldPlayer?.isHuman ? '人类' : 'AI'})`);
+    console.log(`🔄 到: ${switchedPlayer?.name} (${switchedPlayer?.id}, ${switchedPlayer?.isHuman ? '人类' : 'AI'})`);
     
     // 如果回到第一个玩家，回合数+1
     if (this.gameState.currentPlayerIndex === 0) {
@@ -383,6 +412,7 @@ export class GameEngine {
     
     // 开始新玩家回合
     const newPlayer = this.getCurrentPlayer();
+    console.log(`🔄 新回合开始: ${newPlayer?.name} (${newPlayer?.isHuman ? '人类' : 'AI'}) (索引: ${this.gameState.currentPlayerIndex})`);
     if (newPlayer) {
       await this.startPlayerTurn(newPlayer);
     }
@@ -837,11 +867,20 @@ export class GameEngine {
    * 处理单个动作
    */
   private async processAction(action: PlayerAction): Promise<void> {
-    if (!this.gameState) return;
+    console.log('🔄 processAction 开始处理动作:', action.type);
+    console.log('🔄 gameState 存在:', !!this.gameState);
+    
+    if (!this.gameState) {
+      console.error('❌ processAction: gameState 为空');
+      return;
+    }
 
+    console.log('🔄 进入动作分发 switch...');
     switch (action.type) {
       case 'roll_dice':
+        console.log('🎲 分发到 handleRollDiceAction');
         await this.handleRollDiceAction(action);
+        console.log('🎲 handleRollDiceAction 完成');
         break;
       case 'use_skill':
         if (action.data?.skillId) {
@@ -875,12 +914,22 @@ export class GameEngine {
    * 处理掷骰子动作
    */
   private async handleRollDiceAction(action: PlayerAction): Promise<void> {
-    if (!this.gameState) return;
+    console.log('🎲 handleRollDiceAction 开始处理');
+    console.log('🎲 动作数据:', action);
+    console.log('🎲 游戏状态存在:', !!this.gameState);
+    
+    if (!this.gameState) {
+      console.error('❌ handleRollDiceAction: gameState 为空');
+      return;
+    }
 
+    console.log('🎲 开始掷骰子...');
     const diceResult = this.rollDice();
     console.log('🎲 handleRollDiceAction - 骰子结果:', diceResult);
+    
     const player = this.gameState.players.find(p => p.id === action.playerId);
     console.log('🎲 玩家信息:', player?.name, '移动前位置:', player?.position);
+    console.log('🎲 所有玩家:', this.gameState.players.map(p => ({ id: p.id, name: p.name })));
     
     if (player) {
       // 移动玩家
@@ -1031,12 +1080,22 @@ export class GameEngine {
     if (!player) return;
 
     const cell = this.gameState.board[player.position];
-    if (!cell || !cell.ownerId || !cell.rent) return;
+    if (!cell || !cell.ownerId || !cell.rent) {
+      console.log('💳 支付租金失败: 格子信息不完整');
+      this.gameState.phase = 'end_turn';
+      return;
+    }
 
     const owner = this.gameState.players.find(p => p.id === cell.ownerId);
-    if (!owner) return;
+    if (!owner) {
+      console.log('💳 支付租金失败: 找不到地产拥有者');
+      this.gameState.phase = 'end_turn';
+      return;
+    }
 
     const rentAmount = cell.rent;
+    console.log(`💳 ${player.name} 需要向 ${owner.name} 支付租金 $${rentAmount}`);
+    
     if (player.money >= rentAmount) {
       player.money -= rentAmount;
       owner.money += rentAmount;
@@ -1044,10 +1103,18 @@ export class GameEngine {
       player.statistics.rentPaid += rentAmount;
       owner.statistics.rentCollected += rentAmount;
 
+      console.log(`✅ 租金支付成功: ${player.name} 支付 $${rentAmount} 给 ${owner.name}`);
+      console.log(`💰 ${player.name} 余额: $${player.money}, ${owner.name} 余额: $${owner.money}`);
+      
       this.eventEmitter.emit('rent:paid', { player, owner, amount: rentAmount, cell });
+      
+      // 支付完成，结束回合
+      this.gameState.phase = 'end_turn';
     } else {
-      // 钱不够支付租金，可能触发破产
+      console.log(`❌ ${player.name} 资金不足，无法支付租金 $${rentAmount} (余额: $${player.money})`);
+      // 钱不够支付租金，触发破产处理
       this.handleBankruptcy(player);
+      this.gameState.phase = 'end_turn';
     }
   }
 
@@ -1058,7 +1125,14 @@ export class GameEngine {
     if (!this.gameState) return;
 
     const player = this.gameState.players.find(p => p.id === action.playerId);
-    if (!player) return;
+    if (!player) {
+      console.error(`❌ handleEndTurnAction: 找不到玩家 ${action.playerId}`);
+      return;
+    }
+
+    console.log(`🔚 处理结束回合: ${player.name} (${action.playerId})`);
+    console.log(`🔚 当前玩家索引: ${this.gameState.currentPlayerIndex}`);
+    console.log(`🔚 当前玩家: ${this.gameState.players[this.gameState.currentPlayerIndex]?.name}`);
 
     // 结束当前玩家的回合
     await this.endPlayerTurn(player);
@@ -1136,16 +1210,20 @@ export class GameEngine {
   private async startPlayerTurn(player: Player): Promise<void> {
     if (!this.gameState) return;
 
+    console.log(`🎯 开始回合: ${player.name} (${player.isHuman ? '人类' : 'AI'}) - ID: ${player.id}`);
     player.statistics.turnsPlayed++;
     this.gameState.phase = 'roll_dice';
+    console.log(`🎯 设置阶段为: ${this.gameState.phase}`);
     
     this.eventEmitter.emit('turn:start', player);
     
     // 如果是AI玩家，自动开始AI决策
     if (!player.isHuman) {
+      console.log(`🤖 ${player.name} 是AI玩家，将自动执行`);
       await delay(1000); // 给一点思考时间
-      // TODO: 集成AI决策系统
       this.eventEmitter.emit('ai:turn_start', player);
+    } else {
+      console.log(`👤 ${player.name} 是人类玩家，等待操作`);
     }
   }
 
@@ -1387,43 +1465,273 @@ export class GameEngine {
   }
 
   /**
-   * 更新AI玩家
-   * 注意：AI逻辑现在由GameLoop组件处理，这里禁用以避免冲突
+   * 更新AI玩家 - 简化的AI系统
    */
   private async updateAIPlayers(): Promise<void> {
     if (!this.gameState) return;
 
+    // 🔒 防止AI重复执行
+    if (this.aiExecuting) {
+      console.log(`🔒 AI正在执行中，跳过此次检查`);
+      return;
+    }
+    
+    // 获取当前玩家 - 必须在最开始定义
     const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
     
-    // AI逻辑现在由GameLoop组件管理，避免双重AI系统冲突
-    console.log(`🤖 GameEngine AI系统已禁用，当前玩家: ${currentPlayer.name}${currentPlayer.isHuman ? ' (人类)' : ' (AI)'}`);
+    // 验证当前玩家索引是否有效
+    if (!currentPlayer) {
+      console.error(`❌ updateAIPlayers: 当前玩家索引 ${this.gameState.currentPlayerIndex} 无效`);
+      return;
+    }
     
-    // 如果需要使用内置AI系统，可以重新启用以下代码：
-    /*
-    if (!currentPlayer.isHuman && this.gameState.phase === 'roll_dice') {
+    // 如果当前玩家是人类，直接跳过AI检查
+    if (currentPlayer.isHuman) {
+      // 减少日志输出，只在首次检查时输出
+      // console.log(`🔍 不执行AI逻辑: 当前玩家是人类 (${currentPlayer.name})`);
+      return;
+    }
+    
+    // ⏰ AI行动间隔控制 - 避免AI行动过快 (仅对AI玩家)
+    const now = Date.now();
+    const minInterval = 800; // 最小0.8秒间隔，让AI能快速继续执行
+    if (now - this.lastAIActionTime < minInterval) {
+      console.log(`⏰ AI行动间隔未到 (${now - this.lastAIActionTime}ms < ${minInterval}ms)`);
+      return;
+    }
+    
+    // 🔒 AI超时保护机制 - 如果AI锁定超过一定时间，强制释放
+    const maxAILockTime = 30000; // 30秒超时
+    if (this.aiExecuting && (now - this.lastAIActionTime) > maxAILockTime) {
+      console.warn(`⚠️ AI执行超时，强制释放锁 (${now - this.lastAIActionTime}ms > ${maxAILockTime}ms)`);
+      this.aiExecuting = false;
+      this.lastAIActionTime = 0;
+    }
+    
+    // 减少调试日志输出，只在AI开始执行时输出
+    // console.log(`🔍 updateAIPlayers DEBUG:`);
+    // console.log(`  - currentPlayerIndex: ${this.gameState.currentPlayerIndex}`);
+    // console.log(`  - currentPlayer.name: ${currentPlayer.name}`);
+    // console.log(`  - currentPlayer.id: ${currentPlayer.id}`);
+    // console.log(`  - currentPlayer.isHuman: ${currentPlayer.isHuman}`);
+    // console.log(`  - gameState.status: ${this.gameState.status}`);
+    // console.log(`  - gameState.phase: ${this.gameState.phase}`);
+    // console.log(`  - aiExecuting: ${this.aiExecuting}`);
+    // console.log(`  - AI条件检查: !${currentPlayer.isHuman} && '${this.gameState.status}' === 'playing' = ${!currentPlayer.isHuman && this.gameState.status === 'playing'}`);
+    
+    // 如果当前玩家是AI并且游戏正在进行
+    if (!currentPlayer.isHuman && this.gameState.status === 'playing') {
+      console.log(`🤖 ✅ AI条件满足，开始AI逻辑`);
+      
+      // 🔒 设置执行锁并记录时间
+      this.aiExecuting = true;
+      this.lastAIActionTime = Date.now();
+      
+      console.log(`🤖 AI玩家 ${currentPlayer.name} (ID: ${currentPlayer.id}) 的回合，阶段: ${this.gameState.phase}`);
+      
+      // 验证currentPlayer ID确实匹配当前索引的玩家
+      const verifyPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+      if (verifyPlayer.id !== currentPlayer.id) {
+        console.error(`❌ AI玩家ID不匹配! 预期: ${verifyPlayer.id}, 实际: ${currentPlayer.id}`);
+        this.aiExecuting = false; // 🔒 释放锁
+        return;
+      }
+      
+      // 额外验证：确保使用当前玩家的ID，而不是传递的playerId
+      const actionPlayerId = currentPlayer.id; // 强制使用当前玩家ID
+      console.log(`🤖 AI使用的playerId: ${actionPlayerId}`);
+      
       try {
-        const decision = await this.aiManager.makeDecision(currentPlayer.id, {
-          gameState: this.gameState,
-          availableActions: ['roll_dice'],
-          timeLimit: 3000
-        });
-
-        if (decision && decision.action) {
-          await this.processPlayerAction({
-            type: decision.action.type,
-            playerId: currentPlayer.id,
-            data: decision.action.parameters
-          });
+        // 给AI一点思考时间
+        await delay(300 + Math.random() * 200); // 0.3-0.5秒随机延迟，加快 AI 执行
+        
+        // 🤖 AI决策逻辑 - 严格按照游戏规则执行
+        console.log(`🤖 AI ${currentPlayer.name} 分析当前阶段: ${this.gameState.phase}`);
+        
+        switch (this.gameState.phase) {
+          case 'roll_dice':
+            console.log(`🎲 AI ${currentPlayer.name} 执行掷骰子动作`);
+            await this.processPlayerAction({
+              type: 'roll_dice',
+              playerId: actionPlayerId,
+              timestamp: Date.now(),
+              data: {}
+            });
+            // 掷骰子后等待游戏引擎处理移动和下一阶段
+            break;
+            
+          case 'property_action':
+            // AI地产决策 - 仅在可购买地产时触发
+            const position = currentPlayer.position;
+            const cell = this.gameState.board[position];
+            
+            console.log(`🏠 AI ${currentPlayer.name} 分析位置 ${position} 的地产:`);
+            console.log(`  - 格子类型: ${cell?.type}`);
+            console.log(`  - 是否已有拥有者: ${cell?.ownerId ? '是' : '否'}`);
+            console.log(`  - AI当前资金: $${currentPlayer.money}`);
+            
+            if (cell && this.isPurchasableType(cell.type) && !cell.ownerId) {
+              const price = this.getPropertyPrice(position);
+              console.log(`  - 地产价格: $${price}`);
+              
+              // AI购买策略：基于生肖特性调整策略
+              let riskTolerance = 0.3; // 默认保守策略
+              switch (currentPlayer.zodiac) {
+                case '龙':
+                  riskTolerance = 0.2; // 龙：激进投资
+                  break;
+                case '虎':
+                  riskTolerance = 0.25; // 虎：冒险型
+                  break;
+                case '兔':
+                  riskTolerance = 0.4; // 兔：保守型
+                  break;
+                default:
+                  riskTolerance = 0.3; // 默认平衡型
+              }
+              
+              const safetyReserve = Math.max(3000, currentPlayer.money * riskTolerance);
+              const canAfford = currentPlayer.money >= price + safetyReserve;
+              
+              console.log(`  - 安全资金要求: $${safetyReserve}`);
+              console.log(`  - 是否可负担: ${canAfford}`);
+              
+              if (canAfford) {
+                console.log(`💰 AI ${currentPlayer.name} 决定购买地产 ${position} ($${price})`);
+                await this.processPlayerAction({
+                  type: 'buy_property',
+                  playerId: actionPlayerId,
+                  timestamp: Date.now(),
+                  data: {}
+                });
+              } else {
+                console.log(`💸 AI ${currentPlayer.name} 资金不足，跳过购买`);
+                await this.processPlayerAction({
+                  type: 'skip_purchase',
+                  playerId: actionPlayerId,
+                  timestamp: Date.now(),
+                  data: {}
+                });
+              }
+            } else {
+              // 不是可购买地产或已被拥有，直接结束回合
+              console.log(`🏛️ AI ${currentPlayer.name} 在特殊位置或他人地产，结束回合`);
+              await this.processPlayerAction({
+                type: 'end_turn',
+                playerId: actionPlayerId,
+                timestamp: Date.now(),
+                data: {}
+              });
+            }
+            break;
+            
+          case 'pay_rent':
+            // AI租金支付 - 必须支付
+            const rentCell = this.gameState.board[currentPlayer.position];
+            const rentAmount = rentCell?.rent || 0;
+            const owner = this.gameState.players.find(p => p.id === rentCell?.ownerId);
+            
+            console.log(`💳 AI ${currentPlayer.name} 需支付租金:`);
+            console.log(`  - 租金金额: $${rentAmount}`);
+            console.log(`  - 地产拥有者: ${owner?.name || '未知'}`);
+            console.log(`  - AI当前资金: $${currentPlayer.money}`);
+            
+            if (currentPlayer.money >= rentAmount) {
+              console.log(`✅ AI ${currentPlayer.name} 支付租金 $${rentAmount}`);
+              await this.processPlayerAction({
+                type: 'pay_rent',
+                playerId: actionPlayerId,
+                timestamp: Date.now(),
+                data: {}
+              });
+            } else {
+              console.log(`❌ AI ${currentPlayer.name} 资金不足支付租金，可能破产`);
+              // 即使资金不足也要尝试支付，让游戏引擎处理破产
+              await this.processPlayerAction({
+                type: 'pay_rent',
+                playerId: actionPlayerId,
+                timestamp: Date.now(),
+                data: {}
+              });
+            }
+            break;
+            
+          case 'upgrade_property':
+            // AI升级决策 - 暂时保守策略，跳过升级
+            console.log(`🏗️ AI ${currentPlayer.name} 评估地产升级:`);
+            console.log(`  - 当前策略: 保守，跳过升级`);
+            await this.processPlayerAction({
+              type: 'skip_upgrade',
+              playerId: actionPlayerId,
+              timestamp: Date.now(),
+              data: {}
+            });
+            break;
+            
+          case 'end_turn':
+            // 结束回合阶段
+            console.log(`✅ AI ${currentPlayer.name} 结束回合`);
+            await this.processPlayerAction({
+              type: 'end_turn',
+              playerId: actionPlayerId,
+              timestamp: Date.now(),
+              data: {}
+            });
+            break;
+            
+          default:
+            // 未知阶段，尝试结束回合
+            console.log(`❓ AI ${currentPlayer.name} 遇到未知阶段 ${this.gameState.phase}，尝试结束回合`);
+            await this.processPlayerAction({
+              type: 'end_turn',
+              playerId: actionPlayerId,
+              timestamp: Date.now(),
+              data: {}
+            });
+            break;
         }
+        
+        // 🔒 AI单次动作执行完成，但不立即释放锁
+        // AI需要在阶段转换后继续执行，直到回合结束
+        console.log(`🔒 AI ${currentPlayer.name} 单次动作执行完成，检查是否需要继续`);
+        
+        // 强制更新游戏状态
+        this.updateGameState();
+        
+        // 简化AI锁释放机制 - 直接释放锁，让下一次游戏循环检查
+        console.log(`✅ AI ${currentPlayer.name} 动作执行完成，释放锁`);
+        this.aiExecuting = false;
+        
+        // 检查是否已经切换到下一个玩家
+        if (this.gameState) {
+          const newCurrentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+          if (newCurrentPlayer.id !== currentPlayer.id) {
+            console.log(`✨ 回合已切换到 ${newCurrentPlayer.name}`);
+          } else if (this.gameState.phase !== 'roll_dice') {
+            // 如果还是同一个玩家但不是掷骰子阶段，说明需要继续处理
+            console.log(`🔄 AI ${currentPlayer.name} 需要在阶段 ${this.gameState.phase} 继续执行`);
+          }
+        }
+        
       } catch (error) {
-        console.error('AI决策失败:', error);
-        await this.processPlayerAction({
-          type: 'roll_dice',
-          playerId: currentPlayer.id
-        });
+        console.error(`🤖 AI ${currentPlayer.name} 行动失败:`, error);
+        // 出错时尝试结束回合
+        try {
+          await this.processPlayerAction({
+            type: 'end_turn',
+            playerId: actionPlayerId,
+            timestamp: Date.now(),
+            data: {}
+          });
+        } catch (endTurnError) {
+          console.error('AI结束回合也失败:', endTurnError);
+          // 🔒 确保错误情况下也释放锁
+          console.log(`🔒 AI ${currentPlayer.name} 错误处理完成，释放锁`);
+          this.aiExecuting = false;
+          this.lastAIActionTime = 0; // 重置时间戳
+        }
       }
     }
-    */
   }
 
   /**
@@ -1442,6 +1750,21 @@ export class GameEngine {
       this.gameState.status = 'error';
     }
     this.eventEmitter.emit('game:error', error);
+  }
+
+  /**
+   * 处理玩家动作 - 主要接口
+   */
+  async handlePlayerAction(action: any): Promise<any> {
+    console.log('🎮 handlePlayerAction called with:', action);
+    try {
+      const result = await this.processPlayerAction(action);
+      console.log('🎮 handlePlayerAction result:', result);
+      return result;
+    } catch (error) {
+      console.error('🎮 handlePlayerAction error:', error);
+      return { success: false, error: error instanceof Error ? error.message : '未知错误' };
+    }
   }
 
   /**
@@ -1465,6 +1788,14 @@ export class GameEngine {
       timestamp: Date.now(),
       data: action
     };
+    
+    console.log('🔍 PlayerAction 构建完成:', {
+      type: playerAction.type,
+      playerId: playerAction.playerId,
+      currentPlayerIndex: this.gameState.currentPlayerIndex,
+      currentPlayerFromIndex: this.gameState.players[this.gameState.currentPlayerIndex]?.id,
+      actionPlayerId: action.playerId
+    });
 
     // 验证操作是否有效
     if (!this.isValidAction(playerAction)) {
@@ -1507,7 +1838,72 @@ export class GameEngine {
       await this.processActionQueue();
     }
 
-    return { success: true, action: playerAction };
+    // 移除快速检查递归调用，避免死循环
+    // 让游戏循环自然处理AI检查
+    
+    // 返回成功结果并包含详细信息
+    const result = { 
+      success: true, 
+      action: playerAction,
+      details: this.getActionDetails(playerAction)
+    };
+    
+    return result;
+  }
+
+  /**
+   * 获取动作详细信息
+   */
+  private getActionDetails(action: PlayerAction): any {
+    if (!this.gameState) return {};
+    
+    const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
+    const position = currentPlayer?.position || 0;
+    const cell = this.gameState.board?.[position];
+    
+    switch (action.type) {
+      case 'roll_dice':
+        return {
+          player: currentPlayer?.name,
+          newPosition: position,
+          cellName: cell?.name || `位置${position}`
+        };
+        
+      case 'buy_property':
+        const price = cell?.price || this.getPropertyPrice(position);
+        return {
+          player: currentPlayer?.name,
+          property: cell?.name || `地产${position}`,
+          price: price,
+          remainingMoney: currentPlayer?.money
+        };
+        
+      case 'pay_rent':
+        const rentAmount = cell?.rent || 0;
+        const owner = this.gameState.players.find(p => p.id === cell?.ownerId);
+        return {
+          player: currentPlayer?.name,
+          property: cell?.name || `地产${position}`,
+          rentAmount: rentAmount,
+          owner: owner?.name,
+          remainingMoney: currentPlayer?.money
+        };
+        
+      case 'end_turn':
+        const nextPlayerIndex = (this.gameState.currentPlayerIndex + 1) % this.gameState.players.length;
+        const nextPlayer = this.gameState.players[nextPlayerIndex];
+        return {
+          currentPlayer: currentPlayer?.name,
+          nextPlayer: nextPlayer?.name,
+          round: this.gameState.round
+        };
+        
+      default:
+        return {
+          player: currentPlayer?.name,
+          position: position
+        };
+    }
   }
 
   /**
@@ -1518,9 +1914,12 @@ export class GameEngine {
 
     const currentPlayer = this.gameState.players[this.gameState.currentPlayerIndex];
     
-    // 检查是否是当前玩家的操作
+    // 检查是否是当前玩家的操作 - 修复AI玩家验证
     if (action.playerId !== currentPlayer.id && !action.data?.skipPlayerCheck) {
-      console.log(`Player mismatch: expected ${currentPlayer.id}, got ${action.playerId}`);
+      console.log(`🔍 Player mismatch - Expected: ${currentPlayer.id}, Got: ${action.playerId}`);
+      console.log(`🔍 Current player index: ${this.gameState.currentPlayerIndex}`);
+      console.log(`🔍 All players:`, this.gameState.players.map(p => ({ id: p.id, name: p.name })));
+      console.log(`🔍 Current player from array:`, currentPlayer);
       return false;
     }
 
@@ -2016,6 +2415,8 @@ export class GameEngine {
     this.actionQueue = [];
     this.currentAction = null;
     this.stateHistory = [];
+    this.aiExecuting = false; // 🔒 重置AI执行锁
+    this.lastAIActionTime = 0; // 重置AI行动时间
     this.eventEmitter.removeAllListeners();
   }
 
